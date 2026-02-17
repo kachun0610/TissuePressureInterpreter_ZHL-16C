@@ -1,0 +1,688 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tissue Pressure Interpreter ZHL-16C (Shearwater)</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #0a0e14;
+            color: #e5e7eb;
+            overflow: hidden;
+        }
+
+        .container {
+            width: 1920px;
+            height: 1080px;
+            display: flex;
+            flex-direction: column;
+            transform-origin: top left;
+        }
+
+        .top-bar {
+            height: 130px;
+            background: #111827;
+            display: flex;
+            padding: 15px 20px;
+            gap: 20px;
+            border-bottom: 2px solid #1f2937;
+            align-items: center;
+        }
+
+        .left-section {
+            flex: 0 0 400px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .middle-section {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+        }
+
+        .right-section {
+            flex: 0 0 500px;
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            gap: 10px;
+        }
+
+        .title {
+            font-size: 20px;
+            font-weight: bold;
+            color: #e5e7eb;
+            margin-bottom: 5px;
+        }
+
+        button {
+            padding: 10px 20px;
+            background: #3b82f6;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: background 0.2s;
+        }
+
+        button:hover {
+            background: #2563eb;
+        }
+
+        button:disabled {
+            background: #374151;
+            cursor: not-allowed;
+        }
+
+        button.active {
+            background: #10b981;
+        }
+
+        button.active:hover {
+            background: #059669;
+        }
+
+        .file-label {
+            font-size: 13px;
+            color: #9ca3af;
+        }
+
+        .control-buttons {
+            display: flex;
+            gap: 12px;
+        }
+
+        .speed-buttons {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .status-text {
+            font-size: 14px;
+            color: #9ca3af;
+        }
+
+        .main-display {
+            flex: 1;
+            background: #0b0f14;
+            position: relative;
+            overflow: hidden;
+        }
+
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+
+        .settings-panel {
+            height: 280px;
+            background: #111827;
+            padding: 15px 20px;
+            border-top: 2px solid #1f2937;
+            overflow-y: auto;
+            font-size: 13px;
+            line-height: 1.8;
+        }
+
+        .settings-panel p {
+            margin: 5px 0;
+            color: #d1d5db;
+        }
+
+        .settings-panel strong {
+            color: #e5e7eb;
+        }
+
+        input[type="file"] {
+            display: none;
+        }
+
+        @media screen and (max-width: 1920px) {
+            .container {
+                transform: scale(calc(100vw / 1920));
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="top-bar">
+            <div class="left-section">
+                <label for="fileInput" style="display: inline-block;">
+                    <button onclick="document.getElementById('fileInput').click()">Import CSV Log...</button>
+                </label>
+                <input type="file" id="fileInput" accept=".csv">
+                <span class="file-label" id="fileLabel">No file loaded</span>
+            </div>
+            
+            <div class="middle-section">
+                <div class="title">Tissue Pressure Interpreter ZHL-16C (Shearwater)</div>
+                <div class="control-buttons">
+                    <button id="playPauseBtn" disabled>Play</button>
+                    <button id="replayBtn" disabled>Replay</button>
+                    <button id="scaleBtn" disabled>Fix Scale</button>
+                </div>
+                <span class="status-text" id="statusText">Load a CSV to begin.</span>
+            </div>
+            
+            <div class="right-section">
+                <div class="speed-buttons">
+                    <button class="speed-btn" data-delay="10">Very Fast</button>
+                    <button class="speed-btn" data-delay="20">Fast</button>
+                    <button class="speed-btn active" data-delay="100">Normal</button>
+                    <button class="speed-btn" data-delay="200">Slow</button>
+                    <button class="speed-btn" data-delay="500">Very Slow</button>
+                </div>
+            </div>
+        </div>
+        
+        <div class="main-display">
+            <canvas id="tissueCanvas"></canvas>
+        </div>
+        
+        <div class="settings-panel" id="settingsPanel">
+            <p>Dive computer settings will appear here after import.</p>
+        </div>
+    </div>
+
+    <script>
+        // ZHL-16C Constants
+        const P_H2O_BAR = 0.0627;
+        
+        const ZHL16C_N2_HALF = [4.0, 8.0, 12.5, 18.5, 27.0, 38.3, 54.3, 77.0,
+                                109.0, 146.0, 187.0, 239.0, 305.0, 390.0, 498.0, 635.0];
+        
+        const ZHL16C_HE_HALF = [1.51, 3.02, 4.72, 6.99, 10.21, 14.48, 20.53, 29.11,
+                                41.20, 55.19, 70.69, 90.34, 115.29, 147.42, 188.24, 240.03];
+
+        // State
+        let settings = null;
+        let samples = [];
+        let tissueStates = [];
+        let times = [];
+        let ambientPressures = [];
+        let currentIndex = 0;
+        let playing = false;
+        let frameDelay = 100; // milliseconds between frames
+        let timeoutId = null;
+        let fixedScale = false;
+        let maxAmbientPressure = 0;
+
+        // Canvas
+        const canvas = document.getElementById('tissueCanvas');
+        const ctx = canvas.getContext('2d');
+
+        function resizeCanvas() {
+            canvas.width = 1920;
+            canvas.height = 670;
+            redraw();
+        }
+        resizeCanvas();
+
+        // File handling
+        document.getElementById('fileInput').addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            
+            // Reset state
+            resetState();
+            
+            document.getElementById('fileLabel').textContent = file.name;
+            
+            try {
+                const text = await file.text();
+                parseCSV(text);
+                document.getElementById('statusText').textContent = `Loaded ${samples.length} samples. Ready.`;
+                document.getElementById('playPauseBtn').disabled = false;
+                document.getElementById('replayBtn').disabled = false;
+                document.getElementById('scaleBtn').disabled = false;
+                renderSettings();
+                redraw();
+            } catch (error) {
+                document.getElementById('statusText').textContent = `Error: ${error.message}`;
+            }
+        });
+
+        function resetState() {
+            // Stop playback if running
+            playing = false;
+            if (timeoutId) {
+                clearTimeout(timeoutId);
+                timeoutId = null;
+            }
+            
+            // Reset all state variables
+            settings = null;
+            samples = [];
+            tissueStates = [];
+            times = [];
+            ambientPressures = [];
+            currentIndex = 0;
+            fixedScale = false;
+            maxAmbientPressure = 0;
+            
+            // Reset UI
+            document.getElementById('playPauseBtn').textContent = 'Play';
+            document.getElementById('scaleBtn').textContent = 'Fix Scale';
+            
+            // Clear canvas
+            ctx.fillStyle = '#0b0f14';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+        }
+
+        // Control buttons
+        document.getElementById('playPauseBtn').addEventListener('click', () => {
+            if (playing) {
+                playing = false;
+                if (timeoutId) {
+                    clearTimeout(timeoutId);
+                    timeoutId = null;
+                }
+                document.getElementById('playPauseBtn').textContent = 'Play';
+            } else {
+                if (currentIndex >= tissueStates.length - 1) {
+                    currentIndex = 0;
+                }
+                playing = true;
+                document.getElementById('playPauseBtn').textContent = 'Pause';
+                animate();
+            }
+        });
+
+        document.getElementById('replayBtn').addEventListener('click', () => {
+            currentIndex = 0;
+            playing = false;
+            if (timeoutId) {
+                clearTimeout(timeoutId);
+                timeoutId = null;
+            }
+            document.getElementById('playPauseBtn').textContent = 'Play';
+            redraw();
+        });
+
+        document.getElementById('scaleBtn').addEventListener('click', () => {
+            fixedScale = !fixedScale;
+            document.getElementById('scaleBtn').textContent = fixedScale ? 'Dynamic Scale' : 'Fix Scale';
+            redraw();
+        });
+
+        // Speed buttons
+        document.querySelectorAll('.speed-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                frameDelay = parseInt(btn.dataset.delay);
+                
+                // Update button states
+                document.querySelectorAll('.speed-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                
+                const speedName = btn.textContent;
+                document.getElementById('statusText').textContent = `Playback speed: ${speedName}`;
+            });
+        });
+
+        // CSV Parsing
+        function parseCSV(text) {
+            const lines = text.trim().split('\n');
+            
+            // Parse settings from first two lines
+            const settingsHeader = lines[0].split(',');
+            const settingsValues = lines[1].split(',');
+            settings = {};
+            
+            for (let i = 0; i < settingsHeader.length; i++) {
+                const key = settingsHeader[i].trim().replace(/^["']|["']$/g, '');
+                const value = settingsValues[i].trim().replace(/^["']|["']$/g, '');
+                settings[key] = value;
+            }
+            
+            // Find time series header (starts with "Time (sec)")
+            let tsHeaderIdx = -1;
+            for (let i = 2; i < lines.length; i++) {
+                if (lines[i].startsWith('Time (sec)')) {
+                    tsHeaderIdx = i;
+                    break;
+                }
+            }
+            
+            if (tsHeaderIdx === -1) throw new Error('Time series header not found');
+            
+            const tsHeader = lines[tsHeaderIdx].split(',');
+            const timeIdx = 0;  // Time (sec) is first column
+            const depthIdx = 1; // Depth is second column
+            const fo2Idx = 5;   // Fraction O2 is 6th column
+            const fheIdx = 6;   // Fraction He is 7th column
+            
+            // Parse samples
+            samples = [];
+            for (let i = tsHeaderIdx + 1; i < lines.length; i++) {
+                const row = lines[i].split(',');
+                if (row.length > Math.max(timeIdx, depthIdx, fo2Idx, fheIdx)) {
+                    try {
+                        const timeInSec = parseFloat(row[timeIdx]);
+                        const depth = parseFloat(row[depthIdx]);
+                        const fo2 = parseFloat(row[fo2Idx]);
+                        const fhe = parseFloat(row[fheIdx]);
+                        
+                        if (!isNaN(timeInSec) && !isNaN(depth) && !isNaN(fo2) && !isNaN(fhe)) {
+                            samples.push({
+                                time: timeInSec * 1000, // Convert to milliseconds
+                                depth: depth,
+                                fo2: fo2,
+                                fhe: fhe
+                            });
+                        }
+                    } catch (e) {
+                        // Skip invalid rows
+                    }
+                }
+            }
+
+            computeTissues();
+        }
+
+        function getSurfacePressure() {
+            const startP = settings['Start Surface Pressure'];
+            const endP = settings['End Surface Pressure'];
+            
+            if (startP && startP.trim()) {
+                return parseFloat(startP) / 1000;
+            }
+            if (endP && endP.trim()) {
+                return parseFloat(endP) / 1000;
+            }
+            return 1.013;
+        }
+
+        function ambientPressure(depth, surfaceBar) {
+            return surfaceBar + (depth / 10.0);
+        }
+
+        function computeTissues() {
+            const surfaceBar = getSurfacePressure();
+            
+            // Initialize tissues at surface equilibrium
+            const f_he0 = samples[0].fhe;
+            const f_o20 = samples[0].fo2;
+            const f_n20 = Math.max(0, 1 - f_o20 - f_he0);
+            const p_amb0 = ambientPressure(0, surfaceBar);
+            const p_insp_n2_0 = Math.max(0, (p_amb0 - P_H2O_BAR) * f_n20);
+            const p_insp_he_0 = Math.max(0, (p_amb0 - P_H2O_BAR) * f_he0);
+
+            let state = {
+                pn2: Array(16).fill(p_insp_n2_0),
+                phe: Array(16).fill(p_insp_he_0)
+            };
+
+            tissueStates = [];
+            times = [];
+            ambientPressures = [];
+
+            let prev = samples[0];
+            for (const sample of samples) {
+                const dt_ms = sample.time - prev.time;
+                const dt_min = Math.max(0, dt_ms) / 60000.0;
+
+                const f_he = prev.fhe;
+                const f_o2 = prev.fo2;
+                const f_n2 = Math.max(0, 1 - f_o2 - f_he);
+
+                const p_amb = ambientPressure(prev.depth, surfaceBar);
+                const p_insp_n2 = Math.max(0, (p_amb - P_H2O_BAR) * f_n2);
+                const p_insp_he = Math.max(0, (p_amb - P_H2O_BAR) * f_he);
+
+                state = updateTissues(state, dt_min, p_insp_n2, p_insp_he);
+
+                times.push(sample.time);
+                ambientPressures.push(p_amb);
+                tissueStates.push(JSON.parse(JSON.stringify(state)));
+
+                prev = sample;
+            }
+            
+            // Calculate maximum ambient pressure for fixed scale (120% of max)
+            maxAmbientPressure = Math.max(...ambientPressures) * 1.2;
+        }
+
+        function updateTissues(state, dt_min, p_insp_n2, p_insp_he) {
+            const newState = {
+                pn2: [...state.pn2],
+                phe: [...state.phe]
+            };
+
+            for (let i = 0; i < 16; i++) {
+                const k_n2 = Math.log(2) / ZHL16C_N2_HALF[i];
+                const k_he = Math.log(2) / ZHL16C_HE_HALF[i];
+                
+                newState.pn2[i] = p_insp_n2 + (state.pn2[i] - p_insp_n2) * Math.exp(-k_n2 * dt_min);
+                newState.phe[i] = p_insp_he + (state.phe[i] - p_insp_he) * Math.exp(-k_he * dt_min);
+            }
+
+            return newState;
+        }
+
+        function animate() {
+            if (!playing) return;
+
+            currentIndex++;
+
+            redraw();
+
+            if (currentIndex >= tissueStates.length - 1) {
+                playing = false;
+                document.getElementById('playPauseBtn').textContent = 'Play';
+                document.getElementById('statusText').textContent = 'Finished. Press Play to restart.';
+                return;
+            }
+
+            timeoutId = setTimeout(animate, frameDelay);
+        }
+
+        function redraw() {
+            ctx.fillStyle = '#0b0f14';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Header
+            const headerHeight = 70;
+            ctx.fillStyle = '#111827';
+            ctx.fillRect(0, 0, canvas.width, headerHeight);
+
+            // Reset text alignment and baseline to prevent shifting
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'alphabetic';
+
+            if (tissueStates.length > 0 && currentIndex < samples.length) {
+                const t_s = times[currentIndex] / 1000;
+                const depth = samples[currentIndex].depth;
+                const pamb = ambientPressures[currentIndex];
+                const fo2 = samples[currentIndex].fo2;
+                const fhe = samples[currentIndex].fhe;
+                const fn2 = Math.max(0, 1 - fo2 - fhe);
+
+                ctx.fillStyle = '#e5e7eb';
+                ctx.font = 'bold 14px "Segoe UI"';
+                ctx.fillText(
+                    `t=${t_s.toFixed(1)}s   depth=${depth.toFixed(1)} m   Pamb=${pamb.toFixed(3)} bar   FO2=${fo2.toFixed(2)} FHe=${fhe.toFixed(2)} FN2=${fn2.toFixed(2)}   [Frame ${currentIndex + 1}/${tissueStates.length}]`,
+                    12, 45
+                );
+            } else {
+                ctx.fillStyle = '#e5e7eb';
+                ctx.font = 'bold 14px "Segoe UI"';
+                ctx.fillText('Load a CSV log to visualize ZHL-16C tissue pressures.', 12, 45);
+            }
+
+            // Legend at top of graph area - all items on one row
+            const legendX = canvas.width - 650;
+            const legendY = headerHeight + 10;
+            ctx.fillStyle = 'rgba(11, 18, 32, 0.85)';
+            ctx.strokeStyle = '#1f2937';
+            ctx.fillRect(legendX, legendY, 630, 40);
+            ctx.strokeRect(legendX, legendY, 630, 40);
+
+            // N2 legend
+            ctx.fillStyle = '#38bdf8';
+            ctx.fillRect(legendX + 15, legendY + 10, 20, 20);
+            ctx.fillStyle = '#e5e7eb';
+            ctx.font = '12px "Segoe UI"';
+            ctx.textAlign = 'left';
+            ctx.fillText('N₂ tissue pressure', legendX + 45, legendY + 25);
+
+            // He legend
+            ctx.fillStyle = '#a78bfa';
+            ctx.fillRect(legendX + 180, legendY + 10, 20, 20);
+            ctx.fillText('He tissue pressure', legendX + 210, legendY + 25);
+
+            // Ambient pressure legend
+            ctx.strokeStyle = '#f59e0b';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(legendX + 360, legendY + 20);
+            ctx.lineTo(legendX + 380, legendY + 20);
+            ctx.stroke();
+            ctx.fillStyle = '#e5e7eb';
+            ctx.fillText('Ambient pressure reference', legendX + 390, legendY + 25);
+
+            // Draw compartments
+            const topY = headerHeight + 60;
+            const bottomY = canvas.height - 20;
+            const leftX = 40;
+            const rightX = canvas.width - 40;
+            const rowH = (bottomY - topY) / 16;
+            const barMaxW = rightX - leftX - 220;
+
+            // Determine max pressure based on scale mode
+            let maxP = 8.0;
+            if (tissueStates.length > 0 && currentIndex < tissueStates.length) {
+                if (fixedScale) {
+                    maxP = maxAmbientPressure;
+                } else {
+                    const state = tissueStates[currentIndex];
+                    const totals = state.pn2.map((pn2, i) => pn2 + state.phe[i]);
+                    maxP = Math.max(Math.max(...totals), ambientPressures[currentIndex]) * 1.15;
+                }
+            }
+
+            // Axes
+            ctx.strokeStyle = '#334155';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(leftX + 220, topY);
+            ctx.lineTo(leftX + 220, bottomY);
+            ctx.lineTo(rightX, bottomY);
+            ctx.stroke();
+
+            // X ticks
+            ctx.fillStyle = '#94a3b8';
+            ctx.font = '10px "Segoe UI"';
+            ctx.textAlign = 'center';
+            const numTicks = 8;
+            for (let i = 0; i <= numTicks; i++) {
+                const p = (i / numTicks) * maxP;
+                const x = leftX + 220 + (p / maxP) * barMaxW;
+                ctx.beginPath();
+                ctx.moveTo(x, bottomY);
+                ctx.lineTo(x, bottomY + 6);
+                ctx.stroke();
+                ctx.fillText(p.toFixed(1), x, bottomY + 16);
+            }
+
+            // Draw rows
+            for (let i = 0; i < 16; i++) {
+                const y0 = topY + i * rowH;
+                const y1 = y0 + rowH;
+                const yc = (y0 + y1) / 2;
+
+                // Alternating background
+                ctx.fillStyle = i % 2 === 0 ? '#0b0f14' : '#0d1420';
+                ctx.fillRect(0, y0, canvas.width, rowH);
+
+                // Labels
+                ctx.textAlign = 'left';
+                ctx.fillStyle = '#e5e7eb';
+                ctx.font = 'bold 12px "Segoe UI"';
+                ctx.fillText(`Comp ${i + 1}`, leftX, yc + 4);
+
+                ctx.fillStyle = '#94a3b8';
+                ctx.font = '11px "Segoe UI"';
+                ctx.fillText(
+                    `T1/2 N2 ${ZHL16C_N2_HALF[i]}m  He ${ZHL16C_HE_HALF[i]}m`,
+                    leftX + 90, yc + 4
+                );
+
+                // Bars
+                const x0 = leftX + 220;
+                if (tissueStates.length > 0 && currentIndex < tissueStates.length) {
+                    const state = tissueStates[currentIndex];
+                    const pn2 = state.pn2[i];
+                    const phe = state.phe[i];
+                    const ptotal = pn2 + phe;
+
+                    const w_n2 = (pn2 / maxP) * barMaxW;
+                    const w_he = (phe / maxP) * barMaxW;
+
+                    // N2 segment
+                    ctx.fillStyle = '#38bdf8';
+                    ctx.fillRect(x0, y0 + 6, w_n2, rowH - 12);
+
+                    // He segment
+                    ctx.fillStyle = '#a78bfa';
+                    ctx.fillRect(x0 + w_n2, y0 + 6, w_he, rowH - 12);
+
+                    // Ambient pressure line
+                    const pamb = ambientPressures[currentIndex];
+                    const xm = x0 + (pamb / maxP) * barMaxW;
+                    ctx.strokeStyle = '#f59e0b';
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.moveTo(xm, y0 + 4);
+                    ctx.lineTo(xm, y1 - 4);
+                    ctx.stroke();
+
+                    // Numeric readout
+                    ctx.textAlign = 'right';
+                    ctx.fillStyle = '#e5e7eb';
+                    ctx.font = '12px Consolas';
+                    ctx.fillText(
+                        `PN2 ${pn2.toFixed(3)}  PHe ${phe.toFixed(3)}  Total ${ptotal.toFixed(3)} bar`,
+                        rightX, yc + 4
+                    );
+                }
+            }
+        }
+
+        function renderSettings() {
+            if (!settings) return;
+
+            const product = settings['Product'] || settings['product'] || settings['Product Name'] || 'N/A';
+
+            const html = `
+                <p><strong>Product:</strong> ${product} &nbsp;&nbsp; <strong>Model:</strong> ${settings['Computer Model'] || ''} &nbsp;&nbsp; <strong>Serial:</strong> ${settings['Computer Serial Number'] || ''}</p>
+                <p><strong>Start:</strong> ${settings['Start Date'] || ''} &nbsp;&nbsp; <strong>End:</strong> ${settings['End Date'] || ''}</p>
+                <p><strong>Dive #:</strong> ${settings['Dive Number'] || ''} &nbsp;&nbsp; <strong>Max Depth:</strong> ${settings['Max Depth'] || ''} &nbsp;&nbsp; <strong>Max Time:</strong> ${settings['Max Time'] || ''}</p>
+                <p><strong>Deco Model:</strong> ${settings['Deco Model'] || ''} &nbsp;&nbsp; <strong>GF:</strong> ${settings['GF Minimum'] || ''}/${settings['GF Maximum'] || ''} &nbsp;&nbsp; <strong>VPM-B:</strong> ${settings['VPM-B Conservatism'] || ''}</p>
+                <p><strong>Surface pressure (bar):</strong> ${getSurfacePressure().toFixed(3)} &nbsp;&nbsp; (Start mbar: ${settings['Start Surface Pressure'] || ''}, End mbar: ${settings['End Surface Pressure'] || ''})</p>
+                <p><strong>Surface interval (min):</strong> ${settings['Surface Interval (min)'] || ''} &nbsp;&nbsp; <strong>Imperial Units:</strong> ${settings['Imperial Units'] || ''} &nbsp;&nbsp; <strong>Firmware:</strong> ${settings['Computer Firmware Version'] || ''}</p>
+                <br>
+                <p style="color: #9ca3af;">Display: Tissue inert gas partial pressures (bar) computed from logged Depth + Fraction O2/He using ZHL-16C kinetics.</p>
+            `;
+
+            document.getElementById('settingsPanel').innerHTML = html;
+        }
+    </script>
+</body>
+</html>

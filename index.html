@@ -130,14 +130,20 @@
             height: 100%;
         }
 
-        .settings-panel {
+        .bottom-area {
             height: 280px;
             background: #111827;
-            padding: 15px 20px;
             border-top: 2px solid #1f2937;
+            display: flex;
+        }
+
+        .settings-panel {
+            flex: 0 0 50%;
+            padding: 15px 20px;
             overflow-y: auto;
             font-size: 13px;
             line-height: 1.8;
+            border-right: 2px solid #1f2937;
         }
 
         .settings-panel p {
@@ -147,6 +153,11 @@
 
         .settings-panel strong {
             color: #e5e7eb;
+        }
+
+        .depth-graph {
+            flex: 1;
+            position: relative;
         }
 
         input[type="file"] {
@@ -175,7 +186,7 @@
                 <div class="title">Tissue Pressure Interpreter ZHL-16C (Shearwater)</div>
                 <div class="control-buttons">
                     <button id="playPauseBtn" disabled>Play</button>
-                    <button id="replayBtn" disabled>Replay</button>
+                    <button id="restartBtn" disabled>Restart</button>
                     <button id="scaleBtn" disabled>Fix Scale</button>
                 </div>
                 <span class="status-text" id="statusText">Load a CSV to begin.</span>
@@ -196,8 +207,13 @@
             <canvas id="tissueCanvas"></canvas>
         </div>
         
-        <div class="settings-panel" id="settingsPanel">
-            <p>Dive computer settings will appear here after import.</p>
+        <div class="bottom-area">
+            <div class="settings-panel" id="settingsPanel">
+                <p>Dive computer settings will appear here after import.</p>
+            </div>
+            <div class="depth-graph">
+                <canvas id="depthCanvas"></canvas>
+            </div>
         </div>
     </div>
 
@@ -227,11 +243,19 @@
         // Canvas
         const canvas = document.getElementById('tissueCanvas');
         const ctx = canvas.getContext('2d');
+        
+        const depthCanvas = document.getElementById('depthCanvas');
+        const depthCtx = depthCanvas.getContext('2d');
 
         function resizeCanvas() {
             canvas.width = 1920;
             canvas.height = 670;
+            
+            depthCanvas.width = 960;
+            depthCanvas.height = 280;
+            
             redraw();
+            redrawDepthGraph();
         }
         resizeCanvas();
 
@@ -250,10 +274,11 @@
                 parseCSV(text);
                 document.getElementById('statusText').textContent = `Loaded ${samples.length} samples. Ready.`;
                 document.getElementById('playPauseBtn').disabled = false;
-                document.getElementById('replayBtn').disabled = false;
+                document.getElementById('restartBtn').disabled = false;
                 document.getElementById('scaleBtn').disabled = false;
                 renderSettings();
                 redraw();
+                redrawDepthGraph();
             } catch (error) {
                 document.getElementById('statusText').textContent = `Error: ${error.message}`;
             }
@@ -284,6 +309,9 @@
             // Clear canvas
             ctx.fillStyle = '#0b0f14';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            depthCtx.fillStyle = '#111827';
+            depthCtx.fillRect(0, 0, depthCanvas.width, depthCanvas.height);
         }
 
         // Control buttons
@@ -305,7 +333,7 @@
             }
         });
 
-        document.getElementById('replayBtn').addEventListener('click', () => {
+        document.getElementById('restartBtn').addEventListener('click', () => {
             currentIndex = 0;
             playing = false;
             if (timeoutId) {
@@ -314,6 +342,7 @@
             }
             document.getElementById('playPauseBtn').textContent = 'Play';
             redraw();
+            redrawDepthGraph();
         });
 
         document.getElementById('scaleBtn').addEventListener('click', () => {
@@ -482,6 +511,7 @@
             currentIndex++;
 
             redraw();
+            redrawDepthGraph();
 
             if (currentIndex >= tissueStates.length - 1) {
                 playing = false;
@@ -665,20 +695,147 @@
             }
         }
 
+        function redrawDepthGraph() {
+            // Clear background
+            depthCtx.fillStyle = '#111827';
+            depthCtx.fillRect(0, 0, depthCanvas.width, depthCanvas.height);
+
+            if (samples.length === 0) {
+                depthCtx.fillStyle = '#94a3b8';
+                depthCtx.font = '14px "Segoe UI"';
+                depthCtx.textAlign = 'center';
+                depthCtx.fillText('Depth vs Time graph will appear here', depthCanvas.width / 2, depthCanvas.height / 2);
+                return;
+            }
+
+            const margin = { top: 30, right: 30, bottom: 40, left: 60 };
+            const graphWidth = depthCanvas.width - margin.left - margin.right;
+            const graphHeight = depthCanvas.height - margin.top - margin.bottom;
+
+            // Find data ranges
+            const maxTime = Math.max(...times);
+            const maxDepth = Math.max(...samples.map(s => s.depth));
+
+            // Draw title
+            depthCtx.fillStyle = '#e5e7eb';
+            depthCtx.font = 'bold 14px "Segoe UI"';
+            depthCtx.textAlign = 'center';
+            depthCtx.fillText('Depth vs Time', depthCanvas.width / 2, 18);
+
+            // Draw axes
+            depthCtx.strokeStyle = '#334155';
+            depthCtx.lineWidth = 1;
+            depthCtx.beginPath();
+            depthCtx.moveTo(margin.left, margin.top);
+            depthCtx.lineTo(margin.left, margin.top + graphHeight);
+            depthCtx.lineTo(margin.left + graphWidth, margin.top + graphHeight);
+            depthCtx.stroke();
+
+            // Y-axis labels (depth) - inverted so 0 is at top
+            depthCtx.fillStyle = '#94a3b8';
+            depthCtx.font = '10px "Segoe UI"';
+            depthCtx.textAlign = 'right';
+            depthCtx.textBaseline = 'middle';
+            
+            const yTicks = 5;
+            for (let i = 0; i <= yTicks; i++) {
+                const depth = (i / yTicks) * maxDepth;
+                const y = margin.top + (i / yTicks) * graphHeight;
+                
+                depthCtx.beginPath();
+                depthCtx.moveTo(margin.left - 5, y);
+                depthCtx.lineTo(margin.left, y);
+                depthCtx.stroke();
+                
+                depthCtx.fillText(depth.toFixed(1) + 'm', margin.left - 8, y);
+            }
+
+            // X-axis labels (time)
+            depthCtx.textAlign = 'center';
+            depthCtx.textBaseline = 'top';
+            
+            const xTicks = 6;
+            for (let i = 0; i <= xTicks; i++) {
+                const time = (i / xTicks) * maxTime / 1000; // Convert to seconds
+                const x = margin.left + (i / xTicks) * graphWidth;
+                
+                depthCtx.beginPath();
+                depthCtx.moveTo(x, margin.top + graphHeight);
+                depthCtx.lineTo(x, margin.top + graphHeight + 5);
+                depthCtx.stroke();
+                
+                const minutes = Math.floor(time / 60);
+                const seconds = Math.floor(time % 60);
+                depthCtx.fillText(`${minutes}:${seconds.toString().padStart(2, '0')}`, x, margin.top + graphHeight + 8);
+            }
+
+            // Draw depth profile
+            depthCtx.strokeStyle = '#3b82f6';
+            depthCtx.lineWidth = 2;
+            depthCtx.beginPath();
+            
+            for (let i = 0; i < samples.length; i++) {
+                const x = margin.left + (times[i] / maxTime) * graphWidth;
+                const y = margin.top + (samples[i].depth / maxDepth) * graphHeight;
+                
+                if (i === 0) {
+                    depthCtx.moveTo(x, y);
+                } else {
+                    depthCtx.lineTo(x, y);
+                }
+            }
+            depthCtx.stroke();
+
+            // Draw current position indicator
+            if (currentIndex < samples.length) {
+                const currentX = margin.left + (times[currentIndex] / maxTime) * graphWidth;
+                const currentY = margin.top + (samples[currentIndex].depth / maxDepth) * graphHeight;
+                
+                // Vertical line at current time
+                depthCtx.strokeStyle = '#ef4444';
+                depthCtx.lineWidth = 2;
+                depthCtx.setLineDash([5, 5]);
+                depthCtx.beginPath();
+                depthCtx.moveTo(currentX, margin.top);
+                depthCtx.lineTo(currentX, margin.top + graphHeight);
+                depthCtx.stroke();
+                depthCtx.setLineDash([]);
+                
+                // Circle at current position
+                depthCtx.fillStyle = '#ef4444';
+                depthCtx.beginPath();
+                depthCtx.arc(currentX, currentY, 5, 0, Math.PI * 2);
+                depthCtx.fill();
+            }
+
+            // Y-axis label (moved left slightly - adjusted from 15 to 12)
+            depthCtx.fillStyle = '#e5e7eb';
+            depthCtx.font = '12px "Segoe UI"';
+            depthCtx.textAlign = 'center';
+            depthCtx.save();
+            depthCtx.translate(12, depthCanvas.height / 2);
+            depthCtx.rotate(-Math.PI / 2);
+            depthCtx.fillText('Depth (m)', 0, 0);
+            depthCtx.restore();
+            
+            // X-axis label (moved up slightly - adjusted from -8 to -15)
+            depthCtx.fillText('Time (mm:ss)', depthCanvas.width / 2, depthCanvas.height - 15);
+        }
+
         function renderSettings() {
             if (!settings) return;
 
             const product = settings['Product'] || settings['product'] || settings['Product Name'] || 'N/A';
+            const startCNS = settings['Start CNS'] || 'N/A';
+            const endCNS = settings['End CNS'] || 'N/A';
 
             const html = `
                 <p><strong>Product:</strong> ${product} &nbsp;&nbsp; <strong>Model:</strong> ${settings['Computer Model'] || ''} &nbsp;&nbsp; <strong>Serial:</strong> ${settings['Computer Serial Number'] || ''}</p>
                 <p><strong>Start:</strong> ${settings['Start Date'] || ''} &nbsp;&nbsp; <strong>End:</strong> ${settings['End Date'] || ''}</p>
                 <p><strong>Dive #:</strong> ${settings['Dive Number'] || ''} &nbsp;&nbsp; <strong>Max Depth:</strong> ${settings['Max Depth'] || ''} &nbsp;&nbsp; <strong>Max Time:</strong> ${settings['Max Time'] || ''}</p>
                 <p><strong>Deco Model:</strong> ${settings['Deco Model'] || ''} &nbsp;&nbsp; <strong>GF:</strong> ${settings['GF Minimum'] || ''}/${settings['GF Maximum'] || ''} &nbsp;&nbsp; <strong>VPM-B:</strong> ${settings['VPM-B Conservatism'] || ''}</p>
+                <p><strong>Start CNS:</strong> ${startCNS} &nbsp;&nbsp; <strong>End CNS:</strong> ${endCNS}</p>
                 <p><strong>Surface pressure (bar):</strong> ${getSurfacePressure().toFixed(3)} &nbsp;&nbsp; (Start mbar: ${settings['Start Surface Pressure'] || ''}, End mbar: ${settings['End Surface Pressure'] || ''})</p>
-                <p><strong>Surface interval (min):</strong> ${settings['Surface Interval (min)'] || ''} &nbsp;&nbsp; <strong>Imperial Units:</strong> ${settings['Imperial Units'] || ''} &nbsp;&nbsp; <strong>Firmware:</strong> ${settings['Computer Firmware Version'] || ''}</p>
-                <br>
-                <p style="color: #9ca3af;">Display: Tissue inert gas partial pressures (bar) computed from logged Depth + Fraction O2/He using ZHL-16C kinetics.</p>
             `;
 
             document.getElementById('settingsPanel').innerHTML = html;

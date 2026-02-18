@@ -16,24 +16,26 @@
             background: #0a0e14;
             color: #e5e7eb;
             overflow: hidden;
+            width: 100vw;
+            height: 100vh;
         }
 
         .container {
-            width: 1920px;
-            height: 1080px;
+            width: 100%;
+            height: 100%;
             display: flex;
             flex-direction: column;
-            transform-origin: top left;
         }
 
         .top-bar {
-            height: 130px;
+            flex: 0 0 12.037%; /* 130/1080 */
             background: #111827;
             display: flex;
             padding: 15px 20px;
             gap: 20px;
             border-bottom: 2px solid #1f2937;
             align-items: center;
+            min-height: 80px;
         }
 
         .left-section {
@@ -77,6 +79,7 @@
             font-size: 14px;
             font-weight: 600;
             transition: background 0.2s;
+            white-space: nowrap;
         }
 
         button:hover {
@@ -104,6 +107,8 @@
         .control-buttons {
             display: flex;
             gap: 12px;
+            flex-wrap: wrap;
+            justify-content: center;
         }
 
         .speed-buttons {
@@ -115,6 +120,7 @@
         .status-text {
             font-size: 14px;
             color: #9ca3af;
+            text-align: center;
         }
 
         .main-display {
@@ -122,6 +128,7 @@
             background: #0b0f14;
             position: relative;
             overflow: hidden;
+            min-height: 400px;
         }
 
         canvas {
@@ -131,10 +138,11 @@
         }
 
         .bottom-area {
-            height: 280px;
+            flex: 0 0 25.926%; /* 280/1080 */
             background: #111827;
             border-top: 2px solid #1f2937;
             display: flex;
+            min-height: 200px;
         }
 
         .settings-panel {
@@ -162,12 +170,6 @@
 
         input[type="file"] {
             display: none;
-        }
-
-        @media screen and (max-width: 1920px) {
-            .container {
-                transform: scale(calc(100vw / 1920));
-            }
         }
     </style>
 </head>
@@ -236,7 +238,7 @@
         let ambientPressures = [];
         let currentIndex = 0;
         let playing = false;
-        let frameDelay = 100; // milliseconds between frames
+        let frameDelay = 100;
         let timeoutId = null;
         let fixedScale = false;
         let maxAmbientPressure = 0;
@@ -249,15 +251,23 @@
         const depthCtx = depthCanvas.getContext('2d');
 
         function resizeCanvas() {
-            canvas.width = 1920;
-            canvas.height = 670;
+            const mainDisplay = document.querySelector('.main-display');
+            const depthGraphDiv = document.querySelector('.depth-graph');
             
-            depthCanvas.width = 960;
-            depthCanvas.height = 280;
+            // Set canvas size to match actual display size
+            canvas.width = mainDisplay.clientWidth;
+            canvas.height = mainDisplay.clientHeight;
+            
+            depthCanvas.width = depthGraphDiv.clientWidth;
+            depthCanvas.height = depthGraphDiv.clientHeight;
             
             redraw();
             redrawDepthGraph();
         }
+
+        // Resize on load and window resize
+        window.addEventListener('resize', resizeCanvas);
+        window.addEventListener('load', resizeCanvas);
         resizeCanvas();
 
         // File handling
@@ -265,7 +275,6 @@
             const file = e.target.files[0];
             if (!file) return;
             
-            // Reset state
             resetState();
             
             document.getElementById('fileLabel').textContent = file.name;
@@ -295,7 +304,6 @@
                     throw new Error('Could not load Demo Dive Log.csv. Make sure the file is in the same directory as this HTML file.');
                 }
                 
-                // Reset state
                 resetState();
                 
                 const text = await response.text();
@@ -315,14 +323,12 @@
         });
 
         function resetState() {
-            // Stop playback if running
             playing = false;
             if (timeoutId) {
                 clearTimeout(timeoutId);
                 timeoutId = null;
             }
             
-            // Reset all state variables
             settings = null;
             samples = [];
             tissueStates = [];
@@ -332,11 +338,9 @@
             fixedScale = false;
             maxAmbientPressure = 0;
             
-            // Reset UI
             document.getElementById('playPauseBtn').textContent = 'Play';
             document.getElementById('scaleBtn').textContent = 'Fix Scale';
             
-            // Clear canvas
             ctx.fillStyle = '#0b0f14';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
             
@@ -386,7 +390,6 @@
             btn.addEventListener('click', () => {
                 frameDelay = parseInt(btn.dataset.delay);
                 
-                // Update button states
                 document.querySelectorAll('.speed-btn').forEach(b => b.classList.remove('active'));
                 btn.classList.add('active');
                 
@@ -399,7 +402,6 @@
         function parseCSV(text) {
             const lines = text.trim().split('\n');
             
-            // Parse settings from first two lines
             const settingsHeader = lines[0].split(',');
             const settingsValues = lines[1].split(',');
             settings = {};
@@ -410,7 +412,6 @@
                 settings[key] = value;
             }
             
-            // Find time series header (starts with "Time (sec)")
             let tsHeaderIdx = -1;
             for (let i = 2; i < lines.length; i++) {
                 if (lines[i].startsWith('Time (sec)')) {
@@ -422,12 +423,11 @@
             if (tsHeaderIdx === -1) throw new Error('Time series header not found');
             
             const tsHeader = lines[tsHeaderIdx].split(',');
-            const timeIdx = 0;  // Time (sec) is first column
-            const depthIdx = 1; // Depth is second column
-            const fo2Idx = 5;   // Fraction O2 is 6th column
-            const fheIdx = 6;   // Fraction He is 7th column
+            const timeIdx = 0;
+            const depthIdx = 1;
+            const fo2Idx = 5;
+            const fheIdx = 6;
             
-            // Parse samples
             samples = [];
             for (let i = tsHeaderIdx + 1; i < lines.length; i++) {
                 const row = lines[i].split(',');
@@ -440,7 +440,7 @@
                         
                         if (!isNaN(timeInSec) && !isNaN(depth) && !isNaN(fo2) && !isNaN(fhe)) {
                             samples.push({
-                                time: timeInSec * 1000, // Convert to milliseconds
+                                time: timeInSec * 1000,
                                 depth: depth,
                                 fo2: fo2,
                                 fhe: fhe
@@ -475,7 +475,6 @@
         function computeTissues() {
             const surfaceBar = getSurfacePressure();
             
-            // Initialize tissues at surface equilibrium
             const f_he0 = samples[0].fhe;
             const f_o20 = samples[0].fo2;
             const f_n20 = Math.max(0, 1 - f_o20 - f_he0);
@@ -514,7 +513,6 @@
                 prev = sample;
             }
             
-            // Calculate maximum ambient pressure for fixed scale (120% of max)
             maxAmbientPressure = Math.max(...ambientPressures) * 1.2;
         }
 
@@ -557,12 +555,16 @@
             ctx.fillStyle = '#0b0f14';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
 
+            // Responsive sizing
+            const canvasWidth = canvas.width;
+            const canvasHeight = canvas.height;
+            const scaleFactor = Math.min(canvasWidth / 1920, canvasHeight / 670);
+            
             // Header
-            const headerHeight = 70;
+            const headerHeight = Math.max(50, canvasHeight * 0.104); // ~70px at 670px height
             ctx.fillStyle = '#111827';
-            ctx.fillRect(0, 0, canvas.width, headerHeight);
+            ctx.fillRect(0, 0, canvasWidth, headerHeight);
 
-            // Reset text alignment and baseline to prevent shifting
             ctx.textAlign = 'left';
             ctx.textBaseline = 'alphabetic';
 
@@ -575,57 +577,64 @@
                 const fn2 = Math.max(0, 1 - fo2 - fhe);
 
                 ctx.fillStyle = '#e5e7eb';
-                ctx.font = 'bold 14px "Segoe UI"';
+                ctx.font = `bold ${Math.max(10, 14 * scaleFactor)}px "Segoe UI"`;
                 ctx.fillText(
                     `t=${t_s.toFixed(1)}s   depth=${depth.toFixed(1)} m   Pamb=${pamb.toFixed(3)} bar   FO2=${fo2.toFixed(2)} FHe=${fhe.toFixed(2)} FN2=${fn2.toFixed(2)}   [Frame ${currentIndex + 1}/${tissueStates.length}]`,
-                    12, 45
+                    12 * scaleFactor, headerHeight * 0.64
                 );
             } else {
                 ctx.fillStyle = '#e5e7eb';
-                ctx.font = 'bold 14px "Segoe UI"';
-                ctx.fillText('Load a CSV log to visualize ZHL-16C tissue pressures.', 12, 45);
+                ctx.font = `bold ${Math.max(10, 14 * scaleFactor)}px "Segoe UI"`;
+                ctx.fillText('Load a CSV log to visualize ZHL-16C tissue pressures.', 12 * scaleFactor, headerHeight * 0.64);
             }
 
-            // Legend at top of graph area - all items on one row
-            const legendX = canvas.width - 650;
-            const legendY = headerHeight + 10;
+            // Legend
+            const legendWidth = Math.min(630 * scaleFactor, canvasWidth * 0.35);
+            const legendHeight = Math.min(40 * scaleFactor, headerHeight * 0.4);
+            const legendX = canvasWidth - legendWidth - 10;
+            const legendY = headerHeight + 10 * scaleFactor;
+            
             ctx.fillStyle = 'rgba(11, 18, 32, 0.85)';
             ctx.strokeStyle = '#1f2937';
-            ctx.fillRect(legendX, legendY, 630, 40);
-            ctx.strokeRect(legendX, legendY, 630, 40);
+            ctx.fillRect(legendX, legendY, legendWidth, legendHeight);
+            ctx.strokeRect(legendX, legendY, legendWidth, legendHeight);
 
+            const boxSize = legendHeight * 0.5;
+            const fontSize = Math.max(9, 12 * scaleFactor);
+            
             // N2 legend
             ctx.fillStyle = '#38bdf8';
-            ctx.fillRect(legendX + 15, legendY + 10, 20, 20);
+            ctx.fillRect(legendX + 15 * scaleFactor, legendY + legendHeight * 0.25, boxSize, boxSize);
             ctx.fillStyle = '#e5e7eb';
-            ctx.font = '12px "Segoe UI"';
+            ctx.font = `${fontSize}px "Segoe UI"`;
             ctx.textAlign = 'left';
-            ctx.fillText('N₂ tissue pressure', legendX + 45, legendY + 25);
+            ctx.fillText('N₂ tissue pressure', legendX + (15 + 30) * scaleFactor, legendY + legendHeight * 0.625);
 
             // He legend
             ctx.fillStyle = '#a78bfa';
-            ctx.fillRect(legendX + 180, legendY + 10, 20, 20);
-            ctx.fillText('He tissue pressure', legendX + 210, legendY + 25);
+            ctx.fillRect(legendX + legendWidth * 0.286, legendY + legendHeight * 0.25, boxSize, boxSize);
+            ctx.fillText('He tissue pressure', legendX + legendWidth * 0.333, legendY + legendHeight * 0.625);
 
             // Ambient pressure legend
             ctx.strokeStyle = '#f59e0b';
             ctx.lineWidth = 2;
             ctx.beginPath();
-            ctx.moveTo(legendX + 360, legendY + 20);
-            ctx.lineTo(legendX + 380, legendY + 20);
+            ctx.moveTo(legendX + legendWidth * 0.571, legendY + legendHeight * 0.5);
+            ctx.lineTo(legendX + legendWidth * 0.603, legendY + legendHeight * 0.5);
             ctx.stroke();
             ctx.fillStyle = '#e5e7eb';
-            ctx.fillText('Ambient pressure reference', legendX + 390, legendY + 25);
+            ctx.fillText('Ambient pressure reference', legendX + legendWidth * 0.619, legendY + legendHeight * 0.625);
 
             // Draw compartments
-            const topY = headerHeight + 60;
-            const bottomY = canvas.height - 20;
-            const leftX = 40;
-            const rightX = canvas.width - 40;
+            const topY = headerHeight + Math.max(50 * scaleFactor, legendHeight + 20 * scaleFactor);
+            const bottomY = canvasHeight - 20 * scaleFactor;
+            const leftX = 40 * scaleFactor;
+            const rightX = canvasWidth - 40 * scaleFactor;
             const rowH = (bottomY - topY) / 16;
-            const barMaxW = rightX - leftX - 220;
+            const labelWidth = Math.min(220 * scaleFactor, canvasWidth * 0.15);
+            const barMaxW = rightX - leftX - labelWidth;
 
-            // Determine max pressure based on scale mode
+            // Determine max pressure
             let maxP = 8.0;
             if (tissueStates.length > 0 && currentIndex < tissueStates.length) {
                 if (fixedScale) {
@@ -641,27 +650,31 @@
             ctx.strokeStyle = '#334155';
             ctx.lineWidth = 1;
             ctx.beginPath();
-            ctx.moveTo(leftX + 220, topY);
-            ctx.lineTo(leftX + 220, bottomY);
+            ctx.moveTo(leftX + labelWidth, topY);
+            ctx.lineTo(leftX + labelWidth, bottomY);
             ctx.lineTo(rightX, bottomY);
             ctx.stroke();
 
             // X ticks
             ctx.fillStyle = '#94a3b8';
-            ctx.font = '10px "Segoe UI"';
+            ctx.font = `${Math.max(8, 10 * scaleFactor)}px "Segoe UI"`;
             ctx.textAlign = 'center';
             const numTicks = 8;
             for (let i = 0; i <= numTicks; i++) {
                 const p = (i / numTicks) * maxP;
-                const x = leftX + 220 + (p / maxP) * barMaxW;
+                const x = leftX + labelWidth + (p / maxP) * barMaxW;
                 ctx.beginPath();
                 ctx.moveTo(x, bottomY);
-                ctx.lineTo(x, bottomY + 6);
+                ctx.lineTo(x, bottomY + 6 * scaleFactor);
                 ctx.stroke();
-                ctx.fillText(p.toFixed(1), x, bottomY + 16);
+                ctx.fillText(p.toFixed(1), x, bottomY + 16 * scaleFactor);
             }
 
             // Draw rows
+            const compFontSize = Math.max(9, 12 * scaleFactor);
+            const detailFontSize = Math.max(8, 11 * scaleFactor);
+            const valueFontSize = Math.max(9, 12 * scaleFactor);
+            
             for (let i = 0; i < 16; i++) {
                 const y0 = topY + i * rowH;
                 const y1 = y0 + rowH;
@@ -669,23 +682,23 @@
 
                 // Alternating background
                 ctx.fillStyle = i % 2 === 0 ? '#0b0f14' : '#0d1420';
-                ctx.fillRect(0, y0, canvas.width, rowH);
+                ctx.fillRect(0, y0, canvasWidth, rowH);
 
                 // Labels
                 ctx.textAlign = 'left';
                 ctx.fillStyle = '#e5e7eb';
-                ctx.font = 'bold 12px "Segoe UI"';
-                ctx.fillText(`Comp ${i + 1}`, leftX, yc + 4);
+                ctx.font = `bold ${compFontSize}px "Segoe UI"`;
+                ctx.fillText(`Comp ${i + 1}`, leftX, yc + compFontSize * 0.3);
 
                 ctx.fillStyle = '#94a3b8';
-                ctx.font = '11px "Segoe UI"';
+                ctx.font = `${detailFontSize}px "Segoe UI"`;
                 ctx.fillText(
                     `T1/2 N2 ${ZHL16C_N2_HALF[i]}m  He ${ZHL16C_HE_HALF[i]}m`,
-                    leftX + 90, yc + 4
+                    leftX + labelWidth * 0.35, yc + detailFontSize * 0.3
                 );
 
                 // Bars
-                const x0 = leftX + 220;
+                const x0 = leftX + labelWidth;
                 if (tissueStates.length > 0 && currentIndex < tissueStates.length) {
                     const state = tissueStates[currentIndex];
                     const pn2 = state.pn2[i];
@@ -694,14 +707,16 @@
 
                     const w_n2 = (pn2 / maxP) * barMaxW;
                     const w_he = (phe / maxP) * barMaxW;
+                    
+                    const barPadding = rowH * 0.15;
 
                     // N2 segment
                     ctx.fillStyle = '#38bdf8';
-                    ctx.fillRect(x0, y0 + 6, w_n2, rowH - 12);
+                    ctx.fillRect(x0, y0 + barPadding, w_n2, rowH - 2 * barPadding);
 
                     // He segment
                     ctx.fillStyle = '#a78bfa';
-                    ctx.fillRect(x0 + w_n2, y0 + 6, w_he, rowH - 12);
+                    ctx.fillRect(x0 + w_n2, y0 + barPadding, w_he, rowH - 2 * barPadding);
 
                     // Ambient pressure line
                     const pamb = ambientPressures[currentIndex];
@@ -709,48 +724,55 @@
                     ctx.strokeStyle = '#f59e0b';
                     ctx.lineWidth = 2;
                     ctx.beginPath();
-                    ctx.moveTo(xm, y0 + 4);
-                    ctx.lineTo(xm, y1 - 4);
+                    ctx.moveTo(xm, y0 + barPadding * 0.5);
+                    ctx.lineTo(xm, y1 - barPadding * 0.5);
                     ctx.stroke();
 
                     // Numeric readout
                     ctx.textAlign = 'right';
                     ctx.fillStyle = '#e5e7eb';
-                    ctx.font = '12px Consolas';
+                    ctx.font = `${valueFontSize}px Consolas`;
                     ctx.fillText(
                         `PN2 ${pn2.toFixed(3)}  PHe ${phe.toFixed(3)}  Total ${ptotal.toFixed(3)} bar`,
-                        rightX, yc + 4
+                        rightX, yc + valueFontSize * 0.3
                     );
                 }
             }
         }
 
         function redrawDepthGraph() {
-            // Clear background
             depthCtx.fillStyle = '#111827';
             depthCtx.fillRect(0, 0, depthCanvas.width, depthCanvas.height);
 
             if (samples.length === 0) {
                 depthCtx.fillStyle = '#94a3b8';
-                depthCtx.font = '14px "Segoe UI"';
+                depthCtx.font = `${Math.max(10, depthCanvas.height * 0.05)}px "Segoe UI"`;
                 depthCtx.textAlign = 'center';
                 depthCtx.fillText('Depth vs Time graph will appear here', depthCanvas.width / 2, depthCanvas.height / 2);
                 return;
             }
 
-            const margin = { top: 30, right: 30, bottom: 40, left: 60 };
-            const graphWidth = depthCanvas.width - margin.left - margin.right;
-            const graphHeight = depthCanvas.height - margin.top - margin.bottom;
+            const canvasWidth = depthCanvas.width;
+            const canvasHeight = depthCanvas.height;
+            const scaleFactor = Math.min(canvasWidth / 960, canvasHeight / 280);
 
-            // Find data ranges
+            const margin = { 
+                top: Math.max(20, 30 * scaleFactor), 
+                right: Math.max(20, 30 * scaleFactor), 
+                bottom: Math.max(30, 40 * scaleFactor), 
+                left: Math.max(40, 60 * scaleFactor) 
+            };
+            const graphWidth = canvasWidth - margin.left - margin.right;
+            const graphHeight = canvasHeight - margin.top - margin.bottom;
+
             const maxTime = Math.max(...times);
             const maxDepth = Math.max(...samples.map(s => s.depth));
 
             // Draw title
             depthCtx.fillStyle = '#e5e7eb';
-            depthCtx.font = 'bold 14px "Segoe UI"';
+            depthCtx.font = `bold ${Math.max(10, 14 * scaleFactor)}px "Segoe UI"`;
             depthCtx.textAlign = 'center';
-            depthCtx.fillText('Depth vs Time', depthCanvas.width / 2, 18);
+            depthCtx.fillText('Depth vs Time', canvasWidth / 2, margin.top * 0.6);
 
             // Draw axes
             depthCtx.strokeStyle = '#334155';
@@ -761,9 +783,9 @@
             depthCtx.lineTo(margin.left + graphWidth, margin.top + graphHeight);
             depthCtx.stroke();
 
-            // Y-axis labels (depth) - inverted so 0 is at top
+            // Y-axis labels
             depthCtx.fillStyle = '#94a3b8';
-            depthCtx.font = '10px "Segoe UI"';
+            depthCtx.font = `${Math.max(8, 10 * scaleFactor)}px "Segoe UI"`;
             depthCtx.textAlign = 'right';
             depthCtx.textBaseline = 'middle';
             
@@ -780,13 +802,13 @@
                 depthCtx.fillText(depth.toFixed(1) + 'm', margin.left - 8, y);
             }
 
-            // X-axis labels (time)
+            // X-axis labels
             depthCtx.textAlign = 'center';
             depthCtx.textBaseline = 'top';
             
             const xTicks = 6;
             for (let i = 0; i <= xTicks; i++) {
-                const time = (i / xTicks) * maxTime / 1000; // Convert to seconds
+                const time = (i / xTicks) * maxTime / 1000;
                 const x = margin.left + (i / xTicks) * graphWidth;
                 
                 depthCtx.beginPath();
@@ -801,7 +823,7 @@
 
             // Draw depth profile
             depthCtx.strokeStyle = '#3b82f6';
-            depthCtx.lineWidth = 2;
+            depthCtx.lineWidth = Math.max(1.5, 2 * scaleFactor);
             depthCtx.beginPath();
             
             for (let i = 0; i < samples.length; i++) {
@@ -821,9 +843,9 @@
                 const currentX = margin.left + (times[currentIndex] / maxTime) * graphWidth;
                 const currentY = margin.top + (samples[currentIndex].depth / maxDepth) * graphHeight;
                 
-                // Vertical line at current time
+                // Vertical line
                 depthCtx.strokeStyle = '#ef4444';
-                depthCtx.lineWidth = 2;
+                depthCtx.lineWidth = Math.max(1.5, 2 * scaleFactor);
                 depthCtx.setLineDash([5, 5]);
                 depthCtx.beginPath();
                 depthCtx.moveTo(currentX, margin.top);
@@ -831,25 +853,27 @@
                 depthCtx.stroke();
                 depthCtx.setLineDash([]);
                 
-                // Circle at current position
+                // Circle
                 depthCtx.fillStyle = '#ef4444';
                 depthCtx.beginPath();
-                depthCtx.arc(currentX, currentY, 5, 0, Math.PI * 2);
+                depthCtx.arc(currentX, currentY, Math.max(3, 5 * scaleFactor), 0, Math.PI * 2);
                 depthCtx.fill();
             }
 
-            // Y-axis label (moved left slightly - adjusted from 15 to 12)
+            // Axis labels
             depthCtx.fillStyle = '#e5e7eb';
-            depthCtx.font = '12px "Segoe UI"';
+            depthCtx.font = `${Math.max(9, 12 * scaleFactor)}px "Segoe UI"`;
             depthCtx.textAlign = 'center';
+            
+            // Y-axis label
             depthCtx.save();
-            depthCtx.translate(12, depthCanvas.height / 2);
+            depthCtx.translate(margin.left * 0.2, canvasHeight / 2);
             depthCtx.rotate(-Math.PI / 2);
             depthCtx.fillText('Depth (m)', 0, 0);
             depthCtx.restore();
             
-            // X-axis label (moved up slightly - adjusted from -8 to -15)
-            depthCtx.fillText('Time (mm:ss)', depthCanvas.width / 2, depthCanvas.height - 15);
+            // X-axis label
+            depthCtx.fillText('Time (mm:ss)', canvasWidth / 2, canvasHeight - margin.bottom * 0.375);
         }
 
         function renderSettings() {

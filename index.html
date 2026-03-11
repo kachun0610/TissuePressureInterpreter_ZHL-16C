@@ -142,8 +142,8 @@
         }
 
         .bottom-area {
-            flex: 0 0 280px;
-            min-height: 280px;
+            flex: 0 0 360px;
+            min-height: 360px;
             background: #111827;
             border-top: 2px solid #1f2937;
             display: flex;
@@ -157,6 +157,12 @@
             font-size: 13px;
             line-height: 1.8;
             border-right: 2px solid #1f2937;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .settings-info {
+            flex: 0 0 auto;
         }
 
         .settings-panel p {
@@ -166,6 +172,51 @@
 
         .settings-panel strong {
             color: #e5e7eb;
+        }
+
+        .metrics-display {
+            flex: 0 0 80px;
+            min-height: 80px;
+            margin-top: 15px;
+            padding: 15px;
+            background: #0b1221;
+            border-radius: 8px;
+            border: 1px solid #1f2937;
+            display: flex;
+            justify-content: space-around;
+            align-items: center;
+        }
+
+        .metric-item {
+            text-align: center;
+            flex: 1;
+        }
+
+        .metric-label {
+            font-size: 11px;
+            color: #9ca3af;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 5px;
+        }
+
+        .metric-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #e5e7eb;
+            font-family: 'Consolas', monospace;
+        }
+
+        .metric-value.warning {
+            color: #f59e0b;
+        }
+
+        .metric-value.danger {
+            color: #ef4444;
+        }
+
+        .metric-value.safe {
+            color: #10b981;
         }
 
         .depth-graph {
@@ -223,8 +274,24 @@
         </div>
         
         <div class="bottom-area">
-            <div class="settings-panel" id="settingsPanel">
-                <p>Dive computer settings will appear here after import.</p>
+            <div class="settings-panel">
+                <div class="settings-info" id="settingsPanel">
+                    <p>Dive computer settings will appear here after import.</p>
+                </div>
+                <div class="metrics-display" id="metricsDisplay" style="display: none;">
+                    <div class="metric-item">
+                        <div class="metric-label">Ceiling</div>
+                        <div class="metric-value" id="ceilingValue">--</div>
+                    </div>
+                    <div class="metric-item">
+                        <div class="metric-label">NDL</div>
+                        <div class="metric-value" id="ndlValue">--</div>
+                    </div>
+                    <div class="metric-item">
+                        <div class="metric-label">TTS</div>
+                        <div class="metric-value" id="ttsValue">--</div>
+                    </div>
+                </div>
             </div>
             <div class="depth-graph">
                 <canvas id="depthCanvas"></canvas>
@@ -242,18 +309,35 @@
         const ZHL16C_HE_HALF = [1.51, 3.02, 4.72, 6.99, 10.21, 14.48, 20.53, 29.11,
                                 41.20, 55.19, 70.69, 90.34, 115.29, 147.42, 188.24, 240.03];
 
+        // Bühlmann coefficients for ZHL-16C
+        const ZHL16C_N2_A = [1.2599, 1.0000, 0.8618, 0.7562, 0.6200, 0.5043, 0.4410, 0.4000,
+                             0.3750, 0.3500, 0.3295, 0.3065, 0.2835, 0.2610, 0.2480, 0.2327];
+        
+        const ZHL16C_N2_B = [0.5050, 0.6514, 0.7222, 0.7825, 0.8126, 0.8434, 0.8693, 0.8910,
+                             0.9092, 0.9222, 0.9319, 0.9403, 0.9477, 0.9544, 0.9602, 0.9653];
+        
+        const ZHL16C_HE_A = [1.6189, 1.3830, 1.1919, 1.0458, 0.9220, 0.8205, 0.7305, 0.6502,
+                             0.5950, 0.5545, 0.5333, 0.5189, 0.5181, 0.5176, 0.5172, 0.5119];
+        
+        const ZHL16C_HE_B = [0.4770, 0.5747, 0.6527, 0.7223, 0.7582, 0.7957, 0.8279, 0.8553,
+                             0.8757, 0.8903, 0.8997, 0.9073, 0.9122, 0.9171, 0.9217, 0.9267];
+
         // State
         let settings = null;
         let samples = [];
         let tissueStates = [];
         let times = [];
         let ambientPressures = [];
+        let ceilings = [];
+        let ndls = [];
         let currentIndex = 0;
         let playing = false;
         let frameDelay = 100;
         let timeoutId = null;
         let fixedScale = false;
         let maxAmbientPressure = 0;
+        let gfLow = 30;
+        let gfHigh = 85;
 
         // Canvas
         const canvas = document.getElementById('tissueCanvas');
@@ -298,9 +382,11 @@
                 document.getElementById('playPauseBtn').disabled = false;
                 document.getElementById('restartBtn').disabled = false;
                 document.getElementById('scaleBtn').disabled = false;
+                document.getElementById('metricsDisplay').style.display = 'flex';
                 renderSettings();
                 redraw();
                 redrawDepthGraph();
+                updateMetrics();
             } catch (error) {
                 document.getElementById('statusText').textContent = `Error: ${error.message}`;
             }
@@ -326,9 +412,11 @@
                 document.getElementById('playPauseBtn').disabled = false;
                 document.getElementById('restartBtn').disabled = false;
                 document.getElementById('scaleBtn').disabled = false;
+                document.getElementById('metricsDisplay').style.display = 'flex';
                 renderSettings();
                 redraw();
                 redrawDepthGraph();
+                updateMetrics();
             } catch (error) {
                 document.getElementById('statusText').textContent = `Error loading demo data: ${error.message}`;
             }
@@ -346,12 +434,15 @@
             tissueStates = [];
             times = [];
             ambientPressures = [];
+            ceilings = [];
+            ndls = [];
             currentIndex = 0;
             fixedScale = false;
             maxAmbientPressure = 0;
             
             document.getElementById('playPauseBtn').textContent = 'Play';
             document.getElementById('scaleBtn').textContent = 'Fix Scale';
+            document.getElementById('metricsDisplay').style.display = 'none';
             
             ctx.fillStyle = '#0b0f14';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -389,6 +480,7 @@
             document.getElementById('playPauseBtn').textContent = 'Play';
             redraw();
             redrawDepthGraph();
+            updateMetrics();
         });
 
         document.getElementById('scaleBtn').addEventListener('click', () => {
@@ -423,6 +515,12 @@
                 const value = settingsValues[i].trim().replace(/^["']|["']$/g, '');
                 settings[key] = value;
             }
+            
+            // Parse GF settings
+            const gfMin = settings['GF Minimum'] || settings['GF Low'];
+            const gfMax = settings['GF Maximum'] || settings['GF High'];
+            if (gfMin) gfLow = parseFloat(gfMin);
+            if (gfMax) gfHigh = parseFloat(gfMax);
             
             let tsHeaderIdx = -1;
             for (let i = 2; i < lines.length; i++) {
@@ -502,6 +600,8 @@
             tissueStates = [];
             times = [];
             ambientPressures = [];
+            ceilings = [];
+            ndls = [];
 
             let prev = samples[0];
             for (const sample of samples) {
@@ -521,6 +621,14 @@
                 times.push(sample.time);
                 ambientPressures.push(p_amb);
                 tissueStates.push(JSON.parse(JSON.stringify(state)));
+                
+                // Pre-calculate ceiling and NDL for each point
+                const ceiling = calculateCeiling(state, p_amb);
+                const ceilingDepth = Math.max(0, (ceiling - surfaceBar) * 10);
+                ceilings.push(ceilingDepth);
+                
+                const ndl = calculateNDL(state, p_amb, sample.depth, sample.fo2, sample.fhe);
+                ndls.push(ndl);
 
                 prev = sample;
             }
@@ -545,6 +653,154 @@
             return newState;
         }
 
+        function calculateMValue(comp, pn2, phe, gf) {
+            // Calculate a and b coefficients for mixed gas
+            const a = ((ZHL16C_N2_A[comp] * pn2) + (ZHL16C_HE_A[comp] * phe)) / (pn2 + phe);
+            const b = ((ZHL16C_N2_B[comp] * pn2) + (ZHL16C_HE_B[comp] * phe)) / (pn2 + phe);
+            
+            const ptotal = pn2 + phe;
+            
+            // M-value at current loading: P_amb_tol = (P_tissue - a) / b
+            const p_amb_tol = (ptotal - a) / b;
+            
+            // Apply gradient factor
+            const p_amb_gf = p_amb_tol * (gf / 100.0);
+            
+            return p_amb_gf;
+        }
+
+        function calculateCeiling(state, pamb) {
+            let maxCeiling = 0;
+            
+            // Calculate GF based on current depth
+            const surfaceBar = getSurfacePressure();
+            const depth = (pamb - surfaceBar) * 10;
+            
+            // Find first stop depth (simplified - actual algorithm is more complex)
+            let gf = gfHigh;
+            
+            for (let i = 0; i < 16; i++) {
+                if (state.pn2[i] + state.phe[i] > 0) {
+                    const ceiling = calculateMValue(i, state.pn2[i], state.phe[i], gf);
+                    maxCeiling = Math.max(maxCeiling, ceiling);
+                }
+            }
+            
+            return maxCeiling;
+        }
+
+        function calculateNDL(state, pamb, currentDepth, fo2, fhe) {
+            const surfaceBar = getSurfacePressure();
+            const fn2 = Math.max(0, 1 - fo2 - fhe);
+            
+            // Simulate tissue loading at current depth
+            let simState = {
+                pn2: [...state.pn2],
+                phe: [...state.phe]
+            };
+            
+            const p_insp_n2 = Math.max(0, (pamb - P_H2O_BAR) * fn2);
+            const p_insp_he = Math.max(0, (pamb - P_H2O_BAR) * fhe);
+            
+            let ndl = 0;
+            const maxNDL = 999; // Maximum NDL to calculate
+            
+            // Step forward in 1-minute increments
+            for (let min = 0; min < maxNDL; min++) {
+                simState = updateTissues(simState, 1.0, p_insp_n2, p_insp_he);
+                
+                const ceiling = calculateCeiling(simState, pamb);
+                
+                // If ceiling exceeds current depth, we've hit the NDL
+                if (ceiling > surfaceBar) {
+                    ndl = min;
+                    break;
+                }
+                
+                if (min === maxNDL - 1) {
+                    ndl = maxNDL;
+                }
+            }
+            
+            return ndl;
+        }
+
+        function calculateTTS(state, currentDepth, pamb, fo2, fhe) {
+            // Simplified TTS calculation
+            const surfaceBar = getSurfacePressure();
+            const ceiling = calculateCeiling(state, pamb);
+            
+            // If no ceiling, TTS is just ascent time
+            if (ceiling <= surfaceBar) {
+                // Ascent at 10m/min
+                const ascentTime = currentDepth / 10.0;
+                return Math.ceil(ascentTime);
+            }
+            
+            // If there's a ceiling, we have deco
+            // This is a very simplified calculation
+            const ceilingDepth = (ceiling - surfaceBar) * 10;
+            const ascentToCeiling = (currentDepth - ceilingDepth) / 10.0;
+            
+            // Estimate deco time (very rough)
+            const decoTime = ceilingDepth * 2; // Rough estimate
+            
+            return Math.ceil(ascentToCeiling + decoTime);
+        }
+
+        function updateMetrics() {
+            if (tissueStates.length === 0 || currentIndex >= tissueStates.length) return;
+            
+            const state = tissueStates[currentIndex];
+            const pamb = ambientPressures[currentIndex];
+            const surfaceBar = getSurfacePressure();
+            const sample = samples[currentIndex];
+            
+            // Use pre-calculated values
+            const ceilingDepth = ceilings[currentIndex];
+            const ndl = ndls[currentIndex];
+            
+            const ceilingEl = document.getElementById('ceilingValue');
+            if (ceilingDepth < 0.1) {
+                ceilingEl.textContent = '0 m';
+                ceilingEl.className = 'metric-value safe';
+            } else {
+                ceilingEl.textContent = ceilingDepth.toFixed(1) + ' m';
+                if (ceilingDepth > sample.depth) {
+                    ceilingEl.className = 'metric-value danger';
+                } else {
+                    ceilingEl.className = 'metric-value warning';
+                }
+            }
+            
+            const ndlEl = document.getElementById('ndlValue');
+            if (ndl >= 999) {
+                ndlEl.textContent = '999+ min';
+                ndlEl.className = 'metric-value safe';
+            } else if (ndl === 0) {
+                ndlEl.textContent = '0 min';
+                ndlEl.className = 'metric-value danger';
+            } else {
+                ndlEl.textContent = ndl + ' min';
+                if (ndl < 5) {
+                    ndlEl.className = 'metric-value warning';
+                } else {
+                    ndlEl.className = 'metric-value safe';
+                }
+            }
+            
+            // Calculate TTS
+            const tts = calculateTTS(state, sample.depth, pamb, sample.fo2, sample.fhe);
+            const ttsEl = document.getElementById('ttsValue');
+            if (tts === 0 || (tts === Math.ceil(sample.depth / 10.0) && ceilingDepth < 0.1)) {
+                ttsEl.textContent = Math.ceil(sample.depth / 10.0) + ' min';
+                ttsEl.className = 'metric-value safe';
+            } else {
+                ttsEl.textContent = tts + ' min';
+                ttsEl.className = 'metric-value warning';
+            }
+        }
+
         function animate() {
             if (!playing) return;
 
@@ -552,6 +808,7 @@
 
             redraw();
             redrawDepthGraph();
+            updateMetrics();
 
             if (currentIndex >= tissueStates.length - 1) {
                 playing = false;
@@ -771,14 +1028,15 @@
             const margin = { 
                 top: Math.max(20, 30 * scaleFactor), 
                 right: Math.max(20, 30 * scaleFactor), 
-                bottom: Math.max(30, 40 * scaleFactor), 
-                left: Math.max(40, 60 * scaleFactor) 
+                bottom: Math.max(40, 50 * scaleFactor), 
+                left: Math.max(50, 70 * scaleFactor) 
             };
             const graphWidth = canvasWidth - margin.left - margin.right;
             const graphHeight = canvasHeight - margin.top - margin.bottom;
 
             const maxTime = Math.max(...times);
             const maxDepth = Math.max(...samples.map(s => s.depth));
+            const surfaceBar = getSurfacePressure();
 
             // Draw title
             depthCtx.fillStyle = '#e5e7eb';
@@ -833,6 +1091,33 @@
                 depthCtx.fillText(`${minutes}:${seconds.toString().padStart(2, '0')}`, x, margin.top + graphHeight + 8);
             }
 
+            // Axis labels - DRAW THESE FIRST BEFORE DECO ZONES
+            depthCtx.fillStyle = '#e5e7eb';
+            depthCtx.font = `${Math.max(9, 12 * scaleFactor)}px "Segoe UI"`;
+            depthCtx.textAlign = 'center';
+            depthCtx.textBaseline = 'middle';
+            
+            // Y-axis label
+            depthCtx.save();
+            depthCtx.translate(Math.max(12, 15 * scaleFactor), canvasHeight / 2);
+            depthCtx.rotate(-Math.PI / 2);
+            depthCtx.fillText('Depth (m)', 0, 0);
+            depthCtx.restore();
+            
+            // X-axis label
+            depthCtx.textBaseline = 'top';
+            depthCtx.fillText('Time (mm:ss)', canvasWidth / 2, canvasHeight - Math.max(8, 12 * scaleFactor));
+
+            // Highlight deco zones (NDL = 0 or in deco)
+            depthCtx.fillStyle = 'rgba(139, 0, 0, 0.3)'; // Dark red with transparency
+            for (let i = 0; i < samples.length - 1; i++) {
+                if (ndls[i] === 0 || ceilings[i] > 0.1) {
+                    const x1 = margin.left + (times[i] / maxTime) * graphWidth;
+                    const x2 = margin.left + (times[i + 1] / maxTime) * graphWidth;
+                    depthCtx.fillRect(x1, margin.top, x2 - x1, graphHeight);
+                }
+            }
+
             // Draw depth profile
             depthCtx.strokeStyle = '#3b82f6';
             depthCtx.lineWidth = Math.max(1.5, 2 * scaleFactor);
@@ -849,6 +1134,28 @@
                 }
             }
             depthCtx.stroke();
+
+            // Draw ceiling line (green)
+            if (currentIndex < ceilings.length && ceilings[currentIndex] > 0.1) {
+                const ceilingDepth = ceilings[currentIndex];
+                const ceilingY = margin.top + (ceilingDepth / maxDepth) * graphHeight;
+                
+                depthCtx.strokeStyle = '#10b981'; // Green
+                depthCtx.lineWidth = Math.max(2, 2.5 * scaleFactor);
+                depthCtx.setLineDash([8, 4]);
+                depthCtx.beginPath();
+                depthCtx.moveTo(margin.left, ceilingY);
+                depthCtx.lineTo(margin.left + graphWidth, ceilingY);
+                depthCtx.stroke();
+                depthCtx.setLineDash([]);
+                
+                // Label for ceiling
+                depthCtx.fillStyle = '#10b981';
+                depthCtx.font = `bold ${Math.max(8, 10 * scaleFactor)}px "Segoe UI"`;
+                depthCtx.textAlign = 'left';
+                depthCtx.textBaseline = 'bottom';
+                depthCtx.fillText(`Ceiling: ${ceilingDepth.toFixed(1)}m`, margin.left + 5, ceilingY - 3);
+            }
 
             // Draw current position indicator
             if (currentIndex < samples.length) {
@@ -871,21 +1178,6 @@
                 depthCtx.arc(currentX, currentY, Math.max(3, 5 * scaleFactor), 0, Math.PI * 2);
                 depthCtx.fill();
             }
-
-            // Axis labels
-            depthCtx.fillStyle = '#e5e7eb';
-            depthCtx.font = `${Math.max(9, 12 * scaleFactor)}px "Segoe UI"`;
-            depthCtx.textAlign = 'center';
-            
-            // Y-axis label
-            depthCtx.save();
-            depthCtx.translate(margin.left * 0.2, canvasHeight / 2);
-            depthCtx.rotate(-Math.PI / 2);
-            depthCtx.fillText('Depth (m)', 0, 0);
-            depthCtx.restore();
-            
-            // X-axis label
-            depthCtx.fillText('Time (mm:ss)', canvasWidth / 2, canvasHeight - margin.bottom * 0.375);
         }
 
         function renderSettings() {
@@ -899,12 +1191,12 @@
                 <p><strong>Product:</strong> ${product} &nbsp;&nbsp; <strong>Model:</strong> ${settings['Computer Model'] || ''} &nbsp;&nbsp; <strong>Serial:</strong> ${settings['Computer Serial Number'] || ''}</p>
                 <p><strong>Start:</strong> ${settings['Start Date'] || ''} &nbsp;&nbsp; <strong>End:</strong> ${settings['End Date'] || ''}</p>
                 <p><strong>Dive #:</strong> ${settings['Dive Number'] || ''} &nbsp;&nbsp; <strong>Max Depth:</strong> ${settings['Max Depth'] || ''} &nbsp;&nbsp; <strong>Max Time:</strong> ${settings['Max Time'] || ''}</p>
-                <p><strong>Deco Model:</strong> ${settings['Deco Model'] || ''} &nbsp;&nbsp; <strong>GF:</strong> ${settings['GF Minimum'] || ''}/${settings['GF Maximum'] || ''} &nbsp;&nbsp; <strong>VPM-B:</strong> ${settings['VPM-B Conservatism'] || ''}</p>
+                <p><strong>Deco Model:</strong> ${settings['Deco Model'] || ''} &nbsp;&nbsp; <strong>GF:</strong> ${gfLow}/${gfHigh} &nbsp;&nbsp; <strong>VPM-B:</strong> ${settings['VPM-B Conservatism'] || ''}</p>
                 <p><strong>Start CNS:</strong> ${startCNS} &nbsp;&nbsp; <strong>End CNS:</strong> ${endCNS}</p>
                 <p><strong>Surface pressure (bar):</strong> ${getSurfacePressure().toFixed(3)} &nbsp;&nbsp; (Start mbar: ${settings['Start Surface Pressure'] || ''}, End mbar: ${settings['End Surface Pressure'] || ''})</p>
             `;
 
-            document.getElementById('settingsPanel').innerHTML = html;
+            document.getElementById('settingsPanel').innerHTML = '<div class="settings-info">' + html + '</div>';
         }
     </script>
 </body>

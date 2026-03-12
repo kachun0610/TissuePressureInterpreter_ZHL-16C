@@ -223,6 +223,11 @@
             flex: 1;
             min-width: 400px;
             position: relative;
+            cursor: crosshair;
+        }
+
+        .depth-graph.dragging {
+            cursor: grabbing;
         }
 
         input[type="file"] {
@@ -293,7 +298,7 @@
                     </div>
                 </div>
             </div>
-            <div class="depth-graph">
+            <div class="depth-graph" id="depthGraph">
                 <canvas id="depthCanvas"></canvas>
             </div>
         </div>
@@ -339,16 +344,20 @@
         let gfLow = 30;
         let gfHigh = 85;
 
+        // Interactive dragging state
+        let isDragging = false;
+        let graphMargins = { top: 0, right: 0, bottom: 0, left: 0 };
+
         // Canvas
         const canvas = document.getElementById('tissueCanvas');
         const ctx = canvas.getContext('2d');
         
         const depthCanvas = document.getElementById('depthCanvas');
         const depthCtx = depthCanvas.getContext('2d');
+        const depthGraphDiv = document.getElementById('depthGraph');
 
         function resizeCanvas() {
             const mainDisplay = document.querySelector('.main-display');
-            const depthGraphDiv = document.querySelector('.depth-graph');
             
             // Set canvas size to match actual display size
             canvas.width = mainDisplay.clientWidth;
@@ -365,6 +374,71 @@
         window.addEventListener('resize', resizeCanvas);
         window.addEventListener('load', resizeCanvas);
         resizeCanvas();
+
+        // Interactive depth graph controls
+        depthGraphDiv.addEventListener('mousedown', handleMouseDown);
+        depthGraphDiv.addEventListener('mousemove', handleMouseMove);
+        depthGraphDiv.addEventListener('mouseup', handleMouseUp);
+        depthGraphDiv.addEventListener('mouseleave', handleMouseUp);
+
+        function handleMouseDown(e) {
+            if (samples.length === 0) return;
+            
+            const rect = depthCanvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            
+            // Check if click is within the graph area
+            if (x >= graphMargins.left && x <= depthCanvas.width - graphMargins.right) {
+                isDragging = true;
+                depthGraphDiv.classList.add('dragging');
+                
+                // Pause playback if playing
+                if (playing) {
+                    playing = false;
+                    if (timeoutId) {
+                        clearTimeout(timeoutId);
+                        timeoutId = null;
+                    }
+                    document.getElementById('playPauseBtn').textContent = 'Play';
+                }
+                
+                updatePositionFromMouse(e);
+            }
+        }
+
+        function handleMouseMove(e) {
+            if (!isDragging || samples.length === 0) return;
+            updatePositionFromMouse(e);
+        }
+
+        function handleMouseUp(e) {
+            if (isDragging) {
+                isDragging = false;
+                depthGraphDiv.classList.remove('dragging');
+            }
+        }
+
+        function updatePositionFromMouse(e) {
+            const rect = depthCanvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            
+            const graphWidth = depthCanvas.width - graphMargins.left - graphMargins.right;
+            const relativeX = x - graphMargins.left;
+            
+            // Clamp to graph bounds
+            const clampedX = Math.max(0, Math.min(graphWidth, relativeX));
+            
+            // Calculate index based on position
+            const maxTime = Math.max(...times);
+            const ratio = clampedX / graphWidth;
+            const targetIndex = Math.round(ratio * (samples.length - 1));
+            
+            currentIndex = Math.max(0, Math.min(samples.length - 1, targetIndex));
+            
+            redraw();
+            redrawDepthGraph();
+            updateMetrics();
+        }
 
         // File handling
         document.getElementById('fileInput').addEventListener('change', async (e) => {
@@ -424,6 +498,7 @@
 
         function resetState() {
             playing = false;
+            isDragging = false;
             if (timeoutId) {
                 clearTimeout(timeoutId);
                 timeoutId = null;
@@ -443,6 +518,7 @@
             document.getElementById('playPauseBtn').textContent = 'Play';
             document.getElementById('scaleBtn').textContent = 'Fix Scale';
             document.getElementById('metricsDisplay').style.display = 'none';
+            depthGraphDiv.classList.remove('dragging');
             
             ctx.fillStyle = '#0b0f14';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -1026,11 +1102,15 @@
             const scaleFactor = Math.min(canvasWidth / 960, canvasHeight / 280);
 
             const margin = { 
-                top: Math.max(20, 30 * scaleFactor), 
+                top: Math.max(30, 40 * scaleFactor), 
                 right: Math.max(20, 30 * scaleFactor), 
-                bottom: Math.max(40, 50 * scaleFactor), 
-                left: Math.max(50, 70 * scaleFactor) 
+                bottom: Math.max(50, 60 * scaleFactor), 
+                left: Math.max(60, 80 * scaleFactor) 
             };
+            
+            // Store margins for mouse interaction
+            graphMargins = margin;
+            
             const graphWidth = canvasWidth - margin.left - margin.right;
             const graphHeight = canvasHeight - margin.top - margin.bottom;
 
@@ -1038,11 +1118,29 @@
             const maxDepth = Math.max(...samples.map(s => s.depth));
             const surfaceBar = getSurfacePressure();
 
-            // Draw title
+            // Draw axis labels FIRST (background layer) - FIXED POSITION
+            depthCtx.fillStyle = '#e5e7eb';
+            depthCtx.font = `${Math.max(9, 12 * scaleFactor)}px "Segoe UI"`;
+            depthCtx.textAlign = 'center';
+            depthCtx.textBaseline = 'middle';
+            
+            // Y-axis label - FIXED POSITION
+            depthCtx.save();
+            depthCtx.translate(Math.max(12, 15 * scaleFactor), canvasHeight / 2);
+            depthCtx.rotate(-Math.PI / 2);
+            depthCtx.fillText('Depth (m)', 0, 0);
+            depthCtx.restore();
+            
+            // X-axis label - FIXED POSITION
+            depthCtx.textBaseline = 'top';
+            depthCtx.fillText('Time (mm:ss)', canvasWidth / 2, canvasHeight - Math.max(8, 12 * scaleFactor));
+
+            // Draw title - FIXED POSITION
             depthCtx.fillStyle = '#e5e7eb';
             depthCtx.font = `bold ${Math.max(10, 14 * scaleFactor)}px "Segoe UI"`;
             depthCtx.textAlign = 'center';
-            depthCtx.fillText('Depth vs Time', canvasWidth / 2, margin.top * 0.6);
+            depthCtx.textBaseline = 'top';
+            depthCtx.fillText('Depth vs Time', canvasWidth / 2, Math.max(8, 10 * scaleFactor));
 
             // Draw axes
             depthCtx.strokeStyle = '#334155';
@@ -1090,23 +1188,6 @@
                 const seconds = Math.floor(time % 60);
                 depthCtx.fillText(`${minutes}:${seconds.toString().padStart(2, '0')}`, x, margin.top + graphHeight + 8);
             }
-
-            // Axis labels - DRAW THESE FIRST BEFORE DECO ZONES
-            depthCtx.fillStyle = '#e5e7eb';
-            depthCtx.font = `${Math.max(9, 12 * scaleFactor)}px "Segoe UI"`;
-            depthCtx.textAlign = 'center';
-            depthCtx.textBaseline = 'middle';
-            
-            // Y-axis label
-            depthCtx.save();
-            depthCtx.translate(Math.max(12, 15 * scaleFactor), canvasHeight / 2);
-            depthCtx.rotate(-Math.PI / 2);
-            depthCtx.fillText('Depth (m)', 0, 0);
-            depthCtx.restore();
-            
-            // X-axis label
-            depthCtx.textBaseline = 'top';
-            depthCtx.fillText('Time (mm:ss)', canvasWidth / 2, canvasHeight - Math.max(8, 12 * scaleFactor));
 
             // Highlight deco zones (NDL = 0 or in deco)
             depthCtx.fillStyle = 'rgba(139, 0, 0, 0.3)'; // Dark red with transparency

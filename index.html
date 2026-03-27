@@ -259,6 +259,7 @@
                     <button id="restartBtn" disabled>Restart</button>
                     <button id="scaleBtn" disabled>Fix Scale</button>
                     <button id="demoBtn">Use Demo Data</button>
+                    <button id="demoBtnEAN32">Use Demo Data (EAN32)</button>
                 </div>
                 <span class="status-text" id="statusText">Load a CSV to begin.</span>
             </div>
@@ -468,12 +469,21 @@
 
         // Demo Data button handler
         document.getElementById('demoBtn').addEventListener('click', async () => {
+            loadDemoData('Demo Dive Log.csv');
+        });
+
+        // Demo Data (EAN32) button handler
+        document.getElementById('demoBtnEAN32').addEventListener('click', async () => {
+            loadDemoData('Demo Dive Log (EAN32).csv');
+        });
+
+        async function loadDemoData(filename) {
             try {
-                document.getElementById('statusText').textContent = 'Loading demo data...';
+                document.getElementById('statusText').textContent = `Loading ${filename}...`;
                 
-                const response = await fetch('Demo Dive Log.csv');
+                const response = await fetch(filename);
                 if (!response.ok) {
-                    throw new Error('Could not load Demo Dive Log.csv. Make sure the file is in the same directory as this HTML file.');
+                    throw new Error(`Could not load ${filename}. Make sure the file is in the same directory as this HTML file.`);
                 }
                 
                 resetState();
@@ -481,8 +491,8 @@
                 const text = await response.text();
                 parseCSV(text);
                 
-                document.getElementById('fileLabel').textContent = 'Demo Dive Log.csv';
-                document.getElementById('statusText').textContent = `Loaded ${samples.length} samples from demo data. Ready.`;
+                document.getElementById('fileLabel').textContent = filename;
+                document.getElementById('statusText').textContent = `Loaded ${samples.length} samples from ${filename}. Ready.`;
                 document.getElementById('playPauseBtn').disabled = false;
                 document.getElementById('restartBtn').disabled = false;
                 document.getElementById('scaleBtn').disabled = false;
@@ -494,7 +504,7 @@
             } catch (error) {
                 document.getElementById('statusText').textContent = `Error loading demo data: ${error.message}`;
             }
-        });
+        }
 
         function resetState() {
             playing = false;

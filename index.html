@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#0a6e7a">
     <title>Tissue Pressure Interpreter ZHL-16C (Shearwater)</title>
     <link rel="stylesheet" href="styles.css">
     <script src="app.js" defer></script>
@@ -10,18 +11,16 @@
 <body>
     <div class="container">
         <header class="top-bar">
-            <section class="left-section">
-                <button type="button" id="importBtn">Import CSV Log...</button>
-                <input type="file" id="fileInput" accept=".csv">
-                <span class="file-label" id="fileLabel">No file loaded</span>
-            </section>
-
             <section class="middle-section">
                 <h1 class="title">Tissue Pressure Interpreter ZHL-16C (Shearwater)</h1>
                 <div class="control-buttons">
                     <button type="button" id="playPauseBtn" disabled>Play</button>
                     <button type="button" id="restartBtn" disabled>Restart</button>
                     <button type="button" id="scaleBtn" disabled>Fix Scale</button>
+                </div>
+                <div class="data-buttons">
+                    <button type="button" id="importBtn">Import CSV Log...</button>
+                    <input type="file" id="fileInput" accept=".csv">
                     <button type="button" id="demoBtn">Use Demo Data</button>
                     <button type="button" id="demoBtnEAN32">Use Demo Data (EAN32)</button>
                 </div>

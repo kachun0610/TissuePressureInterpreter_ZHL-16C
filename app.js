@@ -1,3 +1,42 @@
+// UI theme (high-contrast light instrument palette)
+const THEME = {
+    canvasBg: '#f7fafc',
+    panelBg: '#eef3f7',
+    rowEven: '#f7fafc',
+    rowOdd: '#eef3f7',
+    ink: '#0b1f2a',
+    inkSecondary: '#243b4a',
+    muted: '#4a6574',
+    border: '#c5d4de',
+    axis: '#6b8494',
+    n2: '#0a6e7a',
+    he: '#8a4b12',
+    onN2: '#ffffff',
+    onHe: '#ffffff',
+    ambient: '#9a5b00',
+    depthLine: '#0a5f9e',
+    ceiling: '#0f6b3c',
+    cursor: '#b42318',
+    decoZone: 'rgba(180, 35, 24, 0.12)',
+    legendBg: 'rgba(255, 255, 255, 0.94)',
+    font: 'IBM Plex Sans',
+    mono: 'IBM Plex Mono'
+};
+
+/** Sharp, clean canvas type: integer px, reliable weights, system fallbacks. */
+function graphFont(size, { weight = 'normal', mono = false } = {}) {
+    const px = Math.max(11, Math.round(size));
+    const family = mono
+        ? `"${THEME.mono}", Consolas, "Courier New", monospace`
+        : `"${THEME.font}", "Segoe UI", system-ui, sans-serif`;
+    return `${weight} ${px}px ${family}`;
+}
+
+function prepareGraphText(ctx) {
+    ctx.imageSmoothingEnabled = true;
+    ctx.textBaseline = 'alphabetic';
+}
+
 // ZHL-16C Constants
 const P_H2O_BAR = 0.0627;
 
@@ -67,6 +106,14 @@ function resizeCanvas() {
 window.addEventListener('resize', resizeCanvas);
 window.addEventListener('load', resizeCanvas);
 resizeCanvas();
+
+// Redraw once web fonts are ready so graph labels stay crisp
+if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(() => {
+        redraw();
+        redrawDepthGraph();
+    });
+}
 
 // Interactive depth graph controls
 depthGraphDiv.addEventListener('mousedown', handleMouseDown);
@@ -144,8 +191,6 @@ document.getElementById('fileInput').addEventListener('change', async (e) => {
     
     resetState();
     
-    document.getElementById('fileLabel').textContent = file.name;
-    
     try {
         const text = await file.text();
         parseCSV(text);
@@ -187,7 +232,6 @@ async function loadDemoData(filename) {
         const text = await response.text();
         parseCSV(text);
         
-        document.getElementById('fileLabel').textContent = filename;
         document.getElementById('statusText').textContent = `Loaded ${samples.length} samples from ${filename}. Ready.`;
         document.getElementById('playPauseBtn').disabled = false;
         document.getElementById('restartBtn').disabled = false;
@@ -226,10 +270,10 @@ function resetState() {
     document.getElementById('metricsDisplay').style.display = 'none';
     depthGraphDiv.classList.remove('dragging');
     
-    ctx.fillStyle = '#0b0f14';
+    ctx.fillStyle = THEME.canvasBg;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     
-    depthCtx.fillStyle = '#111827';
+    depthCtx.fillStyle = THEME.panelBg;
     depthCtx.fillRect(0, 0, depthCanvas.width, depthCanvas.height);
 }
 
@@ -603,8 +647,9 @@ function animate() {
 }
 
 function redraw() {
-    ctx.fillStyle = '#0b0f14';
+    ctx.fillStyle = THEME.canvasBg;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
+    prepareGraphText(ctx);
 
     // Responsive sizing
     const canvasWidth = canvas.width;
@@ -613,12 +658,18 @@ function redraw() {
     
     // Header
     const headerHeight = Math.max(50, canvasHeight * 0.104); // ~70px at 670px height
-    ctx.fillStyle = '#111827';
+    ctx.fillStyle = THEME.panelBg;
     ctx.fillRect(0, 0, canvasWidth, headerHeight);
+    ctx.strokeStyle = THEME.border;
+    ctx.beginPath();
+    ctx.moveTo(0, headerHeight);
+    ctx.lineTo(canvasWidth, headerHeight);
+    ctx.stroke();
 
     ctx.textAlign = 'left';
-    ctx.textBaseline = 'alphabetic';
+    ctx.textBaseline = 'middle';
 
+    const headerFontSize = Math.max(12, 14 * scaleFactor);
     if (tissueStates.length > 0 && currentIndex < samples.length) {
         const t_s = times[currentIndex] / 1000;
         const depth = samples[currentIndex].depth;
@@ -627,63 +678,119 @@ function redraw() {
         const fhe = samples[currentIndex].fhe;
         const fn2 = Math.max(0, 1 - fo2 - fhe);
 
-        ctx.fillStyle = '#e5e7eb';
-        ctx.font = `bold ${Math.max(10, 14 * scaleFactor)}px "Segoe UI"`;
+        ctx.fillStyle = THEME.ink;
+        ctx.font = graphFont(headerFontSize, { weight: '600' });
         ctx.fillText(
             `t=${t_s.toFixed(1)}s   depth=${depth.toFixed(1)} m   Pamb=${pamb.toFixed(3)} bar   FO2=${fo2.toFixed(2)} FHe=${fhe.toFixed(2)} FN2=${fn2.toFixed(2)}   [Frame ${currentIndex + 1}/${tissueStates.length}]`,
-            12 * scaleFactor, headerHeight * 0.64
+            Math.round(12 * scaleFactor), Math.round(headerHeight / 2)
         );
     } else {
-        ctx.fillStyle = '#e5e7eb';
-        ctx.font = `bold ${Math.max(10, 14 * scaleFactor)}px "Segoe UI"`;
-        ctx.fillText('Load a CSV log to visualize ZHL-16C tissue pressures.', 12 * scaleFactor, headerHeight * 0.64);
+        ctx.fillStyle = THEME.inkSecondary;
+        ctx.font = graphFont(headerFontSize);
+        ctx.fillText('Load a CSV log to visualize ZHL-16C tissue pressures.', Math.round(12 * scaleFactor), Math.round(headerHeight / 2));
     }
 
-    // Legend
-    const legendWidth = Math.min(630 * scaleFactor, canvasWidth * 0.35);
-    const legendHeight = Math.min(40 * scaleFactor, headerHeight * 0.4);
-    const legendX = canvasWidth - legendWidth - 10;
+    // Legend — auto width from measured text + icons (no overlap)
+    const legendFontSize = Math.max(11, 12 * scaleFactor);
+    const legendPadX = Math.max(10, 12 * scaleFactor);
+    const legendPadY = Math.max(6, 8 * scaleFactor);
+    const legendGap = Math.max(14, 18 * scaleFactor);
+    const legendIconGap = Math.max(6, 8 * scaleFactor);
+    const boxSize = Math.max(10, Math.round(12 * scaleFactor));
+    const lineIconW = Math.max(16, Math.round(18 * scaleFactor));
+
+    ctx.font = graphFont(legendFontSize);
+    const legendItems = [
+        { kind: 'swatch', color: THEME.n2, label: 'N₂ tissue pressure' },
+        { kind: 'swatch', color: THEME.he, label: 'He tissue pressure' },
+        { kind: 'line', color: THEME.ambient, label: 'Ambient pressure reference' }
+    ];
+
+    let legendContentW = 0;
+    for (let li = 0; li < legendItems.length; li++) {
+        const item = legendItems[li];
+        const iconW = item.kind === 'line' ? lineIconW : boxSize;
+        legendContentW += iconW + legendIconGap + ctx.measureText(item.label).width;
+        if (li < legendItems.length - 1) legendContentW += legendGap;
+    }
+
+    const legendWidth = Math.ceil(legendPadX * 2 + legendContentW);
+    const legendHeight = Math.ceil(legendPadY * 2 + Math.max(boxSize, legendFontSize + 2));
+    const legendX = Math.max(10, canvasWidth - legendWidth - 10);
     const legendY = headerHeight + 10 * scaleFactor;
-    
-    ctx.fillStyle = 'rgba(11, 18, 32, 0.85)';
-    ctx.strokeStyle = '#1f2937';
+
+    ctx.fillStyle = THEME.legendBg;
+    ctx.strokeStyle = THEME.border;
     ctx.fillRect(legendX, legendY, legendWidth, legendHeight);
     ctx.strokeRect(legendX, legendY, legendWidth, legendHeight);
 
-    const boxSize = legendHeight * 0.5;
-    const fontSize = Math.max(9, 12 * scaleFactor);
-    
-    // N2 legend
-    ctx.fillStyle = '#38bdf8';
-    ctx.fillRect(legendX + 15 * scaleFactor, legendY + legendHeight * 0.25, boxSize, boxSize);
-    ctx.fillStyle = '#e5e7eb';
-    ctx.font = `${fontSize}px "Segoe UI"`;
+    let legendCursorX = legendX + legendPadX;
+    const legendMidY = legendY + legendHeight / 2;
     ctx.textAlign = 'left';
-    ctx.fillText('N₂ tissue pressure', legendX + (15 + 30) * scaleFactor, legendY + legendHeight * 0.625);
+    ctx.textBaseline = 'middle';
 
-    // He legend
-    ctx.fillStyle = '#a78bfa';
-    ctx.fillRect(legendX + legendWidth * 0.286, legendY + legendHeight * 0.25, boxSize, boxSize);
-    ctx.fillText('He tissue pressure', legendX + legendWidth * 0.333, legendY + legendHeight * 0.625);
+    for (const item of legendItems) {
+        if (item.kind === 'swatch') {
+            ctx.fillStyle = item.color;
+            ctx.fillRect(
+                Math.round(legendCursorX),
+                Math.round(legendMidY - boxSize / 2),
+                boxSize,
+                boxSize
+            );
+            legendCursorX += boxSize + legendIconGap;
+        } else {
+            ctx.strokeStyle = item.color;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(legendCursorX, legendMidY);
+            ctx.lineTo(legendCursorX + lineIconW, legendMidY);
+            ctx.stroke();
+            legendCursorX += lineIconW + legendIconGap;
+        }
 
-    // Ambient pressure legend
-    ctx.strokeStyle = '#f59e0b';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(legendX + legendWidth * 0.571, legendY + legendHeight * 0.5);
-    ctx.lineTo(legendX + legendWidth * 0.603, legendY + legendHeight * 0.5);
-    ctx.stroke();
-    ctx.fillStyle = '#e5e7eb';
-    ctx.fillText('Ambient pressure reference', legendX + legendWidth * 0.619, legendY + legendHeight * 0.625);
+        ctx.fillStyle = THEME.ink;
+        ctx.font = graphFont(legendFontSize);
+        ctx.fillText(item.label, Math.round(legendCursorX), Math.round(legendMidY));
+        legendCursorX += ctx.measureText(item.label).width + legendGap;
+    }
 
-    // Draw compartments
+    // Draw compartments — reserve bottom space so x-axis ticks/labels are never covered
+    const tickFontSize = Math.max(11, 10 * scaleFactor);
+    const tickLen = Math.max(5, Math.round(6 * scaleFactor));
+    const tickLabelGap = Math.max(4, Math.round(6 * scaleFactor));
+    const axisBottomPad = Math.max(6, Math.round(8 * scaleFactor));
+    const axisBottomSpace = tickLen + tickLabelGap + tickFontSize + axisBottomPad;
+
     const topY = headerHeight + Math.max(50 * scaleFactor, legendHeight + 20 * scaleFactor);
-    const bottomY = canvasHeight - 20 * scaleFactor;
+    const bottomY = canvasHeight - axisBottomSpace;
     const leftX = 40 * scaleFactor;
     const rightX = canvasWidth - 40 * scaleFactor;
-    const rowH = (bottomY - topY) / 16;
-    const labelWidth = Math.min(220 * scaleFactor, canvasWidth * 0.15);
-    const barMaxW = rightX - leftX - labelWidth;
+    const rowH = Math.max(1, (bottomY - topY) / 16);
+    const compFontSize = Math.max(12, 12 * scaleFactor);
+    const halfFontSize = Math.max(11, 11 * scaleFactor);
+    const valueFontSize = Math.max(11, 12 * scaleFactor);
+    const labelGap = Math.max(10, 12 * scaleFactor);
+    const labelPadRight = Math.max(12, 14 * scaleFactor);
+
+    // Combined left-column labels; measure so bars start after the text
+    const rowLabels = [];
+    let maxLabelW = 0;
+    for (let i = 0; i < 16; i++) {
+        const compText = `Comp ${i + 1}`;
+        const halfText = `N₂ ${ZHL16C_N2_HALF[i]}m  He ${ZHL16C_HE_HALF[i]}m`;
+        ctx.font = graphFont(compFontSize, { weight: '600' });
+        const compW = ctx.measureText(compText).width;
+        ctx.font = graphFont(halfFontSize);
+        const halfW = ctx.measureText(halfText).width;
+        const totalW = compW + labelGap + halfW;
+        rowLabels.push({ compText, halfText, compW });
+        maxLabelW = Math.max(maxLabelW, totalW);
+    }
+
+    const labelWidth = Math.ceil(maxLabelW + labelPadRight);
+    const barStartX = leftX + labelWidth;
+    const barMaxW = Math.max(40, rightX - barStartX);
 
     // Determine max pressure
     let maxP = 8.0;
@@ -697,59 +804,29 @@ function redraw() {
         }
     }
 
-    // Axes
-    ctx.strokeStyle = '#334155';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(leftX + labelWidth, topY);
-    ctx.lineTo(leftX + labelWidth, bottomY);
-    ctx.lineTo(rightX, bottomY);
-    ctx.stroke();
-
-    // X ticks
-    ctx.fillStyle = '#94a3b8';
-    ctx.font = `${Math.max(8, 10 * scaleFactor)}px "Segoe UI"`;
-    ctx.textAlign = 'center';
-    const numTicks = 8;
-    for (let i = 0; i <= numTicks; i++) {
-        const p = (i / numTicks) * maxP;
-        const x = leftX + labelWidth + (p / maxP) * barMaxW;
-        ctx.beginPath();
-        ctx.moveTo(x, bottomY);
-        ctx.lineTo(x, bottomY + 6 * scaleFactor);
-        ctx.stroke();
-        ctx.fillText(p.toFixed(1), x, bottomY + 16 * scaleFactor);
-    }
-
-    // Draw rows
-    const compFontSize = Math.max(9, 12 * scaleFactor);
-    const detailFontSize = Math.max(8, 11 * scaleFactor);
-    const valueFontSize = Math.max(9, 12 * scaleFactor);
-    
+    // Draw rows first (stop at bottomY so they do not cover the x-axis band)
     for (let i = 0; i < 16; i++) {
         const y0 = topY + i * rowH;
         const y1 = y0 + rowH;
         const yc = (y0 + y1) / 2;
+        const { compText, halfText, compW } = rowLabels[i];
 
-        // Alternating background
-        ctx.fillStyle = i % 2 === 0 ? '#0b0f14' : '#0d1420';
+        // Alternating background — only within plot area
+        ctx.fillStyle = i % 2 === 0 ? THEME.rowEven : THEME.rowOdd;
         ctx.fillRect(0, y0, canvasWidth, rowH);
 
-        // Labels
+        // Combined Comp N + half-times in the left column
         ctx.textAlign = 'left';
-        ctx.fillStyle = '#e5e7eb';
-        ctx.font = `bold ${compFontSize}px "Segoe UI"`;
-        ctx.fillText(`Comp ${i + 1}`, leftX, yc + compFontSize * 0.3);
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = THEME.ink;
+        ctx.font = graphFont(compFontSize, { weight: '600' });
+        ctx.fillText(compText, Math.round(leftX), Math.round(yc));
 
-        ctx.fillStyle = '#94a3b8';
-        ctx.font = `${detailFontSize}px "Segoe UI"`;
-        ctx.fillText(
-            `T1/2 N2 ${ZHL16C_N2_HALF[i]}m  He ${ZHL16C_HE_HALF[i]}m`,
-            leftX + labelWidth * 0.35, yc + detailFontSize * 0.3
-        );
+        ctx.fillStyle = THEME.muted;
+        ctx.font = graphFont(halfFontSize);
+        ctx.fillText(halfText, Math.round(leftX + compW + labelGap), Math.round(yc));
 
-        // Bars
-        const x0 = leftX + labelWidth;
+        // Bars start after the left column
         if (tissueStates.length > 0 && currentIndex < tissueStates.length) {
             const state = tissueStates[currentIndex];
             const pn2 = state.pn2[i];
@@ -762,17 +839,17 @@ function redraw() {
             const barPadding = rowH * 0.15;
 
             // N2 segment
-            ctx.fillStyle = '#38bdf8';
-            ctx.fillRect(x0, y0 + barPadding, w_n2, rowH - 2 * barPadding);
+            ctx.fillStyle = THEME.n2;
+            ctx.fillRect(barStartX, y0 + barPadding, w_n2, rowH - 2 * barPadding);
 
             // He segment
-            ctx.fillStyle = '#a78bfa';
-            ctx.fillRect(x0 + w_n2, y0 + barPadding, w_he, rowH - 2 * barPadding);
+            ctx.fillStyle = THEME.he;
+            ctx.fillRect(barStartX + w_n2, y0 + barPadding, w_he, rowH - 2 * barPadding);
 
             // Ambient pressure line
             const pamb = ambientPressures[currentIndex];
-            const xm = x0 + (pamb / maxP) * barMaxW;
-            ctx.strokeStyle = '#f59e0b';
+            const xm = barStartX + (pamb / maxP) * barMaxW;
+            ctx.strokeStyle = THEME.ambient;
             ctx.lineWidth = 2;
             ctx.beginPath();
             ctx.moveTo(xm, y0 + barPadding * 0.5);
@@ -781,25 +858,55 @@ function redraw() {
 
             // Numeric readout
             ctx.textAlign = 'right';
-            ctx.fillStyle = '#e5e7eb';
-            ctx.font = `${valueFontSize}px Consolas`;
+            ctx.textBaseline = 'middle';
+            ctx.fillStyle = THEME.ink;
+            ctx.font = graphFont(valueFontSize, { mono: true });
             ctx.fillText(
                 `PN2 ${pn2.toFixed(3)}  PHe ${phe.toFixed(3)}  Total ${ptotal.toFixed(3)} bar`,
-                rightX, yc + valueFontSize * 0.3
+                Math.round(rightX), Math.round(yc)
             );
         }
+    }
+
+    // Clear and draw x-axis band above the rows so labels stay visible
+    ctx.fillStyle = THEME.canvasBg;
+    ctx.fillRect(0, bottomY, canvasWidth, canvasHeight - bottomY);
+
+    ctx.strokeStyle = THEME.axis;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(barStartX, topY);
+    ctx.lineTo(barStartX, bottomY);
+    ctx.lineTo(rightX, bottomY);
+    ctx.stroke();
+
+    ctx.fillStyle = THEME.muted;
+    ctx.font = graphFont(tickFontSize);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    const numTicks = 8;
+    for (let i = 0; i <= numTicks; i++) {
+        const p = (i / numTicks) * maxP;
+        const x = barStartX + (p / maxP) * barMaxW;
+        ctx.beginPath();
+        ctx.moveTo(x, bottomY);
+        ctx.lineTo(x, bottomY + tickLen);
+        ctx.stroke();
+        ctx.fillText(p.toFixed(1), Math.round(x), Math.round(bottomY + tickLen + tickLabelGap));
     }
 }
 
 function redrawDepthGraph() {
-    depthCtx.fillStyle = '#111827';
+    depthCtx.fillStyle = THEME.panelBg;
     depthCtx.fillRect(0, 0, depthCanvas.width, depthCanvas.height);
+    prepareGraphText(depthCtx);
 
     if (samples.length === 0) {
-        depthCtx.fillStyle = '#94a3b8';
-        depthCtx.font = `${Math.max(10, depthCanvas.height * 0.05)}px "Segoe UI"`;
+        depthCtx.fillStyle = THEME.muted;
+        depthCtx.font = graphFont(Math.max(12, depthCanvas.height * 0.045));
         depthCtx.textAlign = 'center';
-        depthCtx.fillText('Depth vs Time graph will appear here', depthCanvas.width / 2, depthCanvas.height / 2);
+        depthCtx.textBaseline = 'middle';
+        depthCtx.fillText('Depth vs Time graph will appear here', Math.round(depthCanvas.width / 2), Math.round(depthCanvas.height / 2));
         return;
     }
 
@@ -824,32 +931,36 @@ function redrawDepthGraph() {
     const maxDepth = Math.max(...samples.map(s => s.depth));
     const surfaceBar = getSurfacePressure();
 
+    const axisLabelSize = Math.max(11, 12 * scaleFactor);
+    const tickSize = Math.max(11, 10 * scaleFactor);
+    const titleSize = Math.max(13, 14 * scaleFactor);
+
     // Draw axis labels FIRST (background layer) - FIXED POSITION
-    depthCtx.fillStyle = '#e5e7eb';
-    depthCtx.font = `${Math.max(9, 12 * scaleFactor)}px "Segoe UI"`;
+    depthCtx.fillStyle = THEME.inkSecondary;
+    depthCtx.font = graphFont(axisLabelSize);
     depthCtx.textAlign = 'center';
     depthCtx.textBaseline = 'middle';
     
     // Y-axis label - FIXED POSITION
     depthCtx.save();
-    depthCtx.translate(Math.max(12, 15 * scaleFactor), canvasHeight / 2);
+    depthCtx.translate(Math.round(Math.max(12, 15 * scaleFactor)), Math.round(canvasHeight / 2));
     depthCtx.rotate(-Math.PI / 2);
     depthCtx.fillText('Depth (m)', 0, 0);
     depthCtx.restore();
     
     // X-axis label - FIXED POSITION
     depthCtx.textBaseline = 'top';
-    depthCtx.fillText('Time (mm:ss)', canvasWidth / 2, canvasHeight - Math.max(8, 12 * scaleFactor));
+    depthCtx.fillText('Time (mm:ss)', Math.round(canvasWidth / 2), Math.round(canvasHeight - Math.max(8, 12 * scaleFactor)));
 
     // Draw title - FIXED POSITION
-    depthCtx.fillStyle = '#e5e7eb';
-    depthCtx.font = `bold ${Math.max(10, 14 * scaleFactor)}px "Segoe UI"`;
+    depthCtx.fillStyle = THEME.ink;
+    depthCtx.font = graphFont(titleSize, { weight: '600' });
     depthCtx.textAlign = 'center';
     depthCtx.textBaseline = 'top';
-    depthCtx.fillText('Depth vs Time', canvasWidth / 2, Math.max(8, 10 * scaleFactor));
+    depthCtx.fillText('Depth vs Time', Math.round(canvasWidth / 2), Math.round(Math.max(8, 10 * scaleFactor)));
 
     // Draw axes
-    depthCtx.strokeStyle = '#334155';
+    depthCtx.strokeStyle = THEME.axis;
     depthCtx.lineWidth = 1;
     depthCtx.beginPath();
     depthCtx.moveTo(margin.left, margin.top);
@@ -858,8 +969,8 @@ function redrawDepthGraph() {
     depthCtx.stroke();
 
     // Y-axis labels
-    depthCtx.fillStyle = '#94a3b8';
-    depthCtx.font = `${Math.max(8, 10 * scaleFactor)}px "Segoe UI"`;
+    depthCtx.fillStyle = THEME.muted;
+    depthCtx.font = graphFont(tickSize);
     depthCtx.textAlign = 'right';
     depthCtx.textBaseline = 'middle';
     
@@ -873,7 +984,7 @@ function redrawDepthGraph() {
         depthCtx.lineTo(margin.left, y);
         depthCtx.stroke();
         
-        depthCtx.fillText(depth.toFixed(1) + 'm', margin.left - 8, y);
+        depthCtx.fillText(depth.toFixed(1) + ' m', Math.round(margin.left - 8), Math.round(y));
     }
 
     // X-axis labels
@@ -892,11 +1003,11 @@ function redrawDepthGraph() {
         
         const minutes = Math.floor(time / 60);
         const seconds = Math.floor(time % 60);
-        depthCtx.fillText(`${minutes}:${seconds.toString().padStart(2, '0')}`, x, margin.top + graphHeight + 8);
+        depthCtx.fillText(`${minutes}:${seconds.toString().padStart(2, '0')}`, Math.round(x), Math.round(margin.top + graphHeight + 8));
     }
 
     // Highlight deco zones (NDL = 0 or in deco)
-    depthCtx.fillStyle = 'rgba(139, 0, 0, 0.3)'; // Dark red with transparency
+    depthCtx.fillStyle = THEME.decoZone;
     for (let i = 0; i < samples.length - 1; i++) {
         if (ndls[i] === 0 || ceilings[i] > 0.1) {
             const x1 = margin.left + (times[i] / maxTime) * graphWidth;
@@ -906,7 +1017,7 @@ function redrawDepthGraph() {
     }
 
     // Draw depth profile
-    depthCtx.strokeStyle = '#3b82f6';
+    depthCtx.strokeStyle = THEME.depthLine;
     depthCtx.lineWidth = Math.max(1.5, 2 * scaleFactor);
     depthCtx.beginPath();
     
@@ -927,7 +1038,7 @@ function redrawDepthGraph() {
         const ceilingDepth = ceilings[currentIndex];
         const ceilingY = margin.top + (ceilingDepth / maxDepth) * graphHeight;
         
-        depthCtx.strokeStyle = '#10b981'; // Green
+        depthCtx.strokeStyle = THEME.ceiling;
         depthCtx.lineWidth = Math.max(2, 2.5 * scaleFactor);
         depthCtx.setLineDash([8, 4]);
         depthCtx.beginPath();
@@ -937,11 +1048,11 @@ function redrawDepthGraph() {
         depthCtx.setLineDash([]);
         
         // Label for ceiling
-        depthCtx.fillStyle = '#10b981';
-        depthCtx.font = `bold ${Math.max(8, 10 * scaleFactor)}px "Segoe UI"`;
+        depthCtx.fillStyle = THEME.ceiling;
+        depthCtx.font = graphFont(Math.max(11, 10 * scaleFactor), { weight: '600' });
         depthCtx.textAlign = 'left';
         depthCtx.textBaseline = 'bottom';
-        depthCtx.fillText(`Ceiling: ${ceilingDepth.toFixed(1)}m`, margin.left + 5, ceilingY - 3);
+        depthCtx.fillText(`Ceiling: ${ceilingDepth.toFixed(1)} m`, Math.round(margin.left + 5), Math.round(ceilingY - 3));
     }
 
     // Draw current position indicator
@@ -950,7 +1061,7 @@ function redrawDepthGraph() {
         const currentY = margin.top + (samples[currentIndex].depth / maxDepth) * graphHeight;
         
         // Vertical line
-        depthCtx.strokeStyle = '#ef4444';
+        depthCtx.strokeStyle = THEME.cursor;
         depthCtx.lineWidth = Math.max(1.5, 2 * scaleFactor);
         depthCtx.setLineDash([5, 5]);
         depthCtx.beginPath();
@@ -960,7 +1071,7 @@ function redrawDepthGraph() {
         depthCtx.setLineDash([]);
         
         // Circle
-        depthCtx.fillStyle = '#ef4444';
+        depthCtx.fillStyle = THEME.cursor;
         depthCtx.beginPath();
         depthCtx.arc(currentX, currentY, Math.max(3, 5 * scaleFactor), 0, Math.PI * 2);
         depthCtx.fill();

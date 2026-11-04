@@ -24,17 +24,36 @@ const THEME = {
 };
 
 /** Sharp, clean canvas type: integer px, reliable weights, system fallbacks. */
-function graphFont(size, { weight = 'normal', mono = false } = {}) {
-    const px = Math.max(11, Math.round(size));
+function graphFont(size, { weight = 'normal', mono = false, min = 8 } = {}) {
+    const px = Math.max(min, Math.round(size));
     const family = mono
         ? `"${THEME.mono}", Consolas, "Courier New", monospace`
         : `"${THEME.font}", "Segoe UI", system-ui, sans-serif`;
     return `${weight} ${px}px ${family}`;
 }
 
+/** Keep text from overflowing short rows (portrait / tall layouts). */
+function fitTextSize(preferred, rowH, ratio = 0.58) {
+    const cap = Math.max(8, rowH * ratio);
+    return Math.min(preferred, cap);
+}
+
 function prepareGraphText(ctx) {
     ctx.imageSmoothingEnabled = true;
     ctx.textBaseline = 'alphabetic';
+}
+
+function syncCanvasSize(canvasEl, cssW, cssH) {
+    const dpr = window.devicePixelRatio || 1;
+    const w = Math.max(1, Math.round(cssW));
+    const h = Math.max(1, Math.round(cssH));
+    canvasEl.style.width = `${w}px`;
+    canvasEl.style.height = `${h}px`;
+    canvasEl.width = Math.max(1, Math.round(w * dpr));
+    canvasEl.height = Math.max(1, Math.round(h * dpr));
+    const context = canvasEl.getContext('2d');
+    context.setTransform(dpr, 0, 0, dpr, 0, 0);
+    return { width: w, height: h };
 }
 
 // ZHL-16C Constants
@@ -80,9 +99,15 @@ let gfHigh = 85;
 let isDragging = false;
 let graphMargins = { top: 0, right: 0, bottom: 0, left: 0 };
 
+// Tissue bar hover (hit regions in CSS pixels, refreshed each redraw)
+let tissueBarHitAreas = [];
+let hoveredComp = -1;
+let lastTissuePointer = null;
+
 // Canvas
 const canvas = document.getElementById('tissueCanvas');
 const ctx = canvas.getContext('2d');
+const tissueTooltip = document.getElementById('tissueTooltip');
 
 const depthCanvas = document.getElementById('depthCanvas');
 const depthCtx = depthCanvas.getContext('2d');
@@ -90,30 +115,144 @@ const depthGraphDiv = document.getElementById('depthGraph');
 
 function resizeCanvas() {
     const mainDisplay = document.querySelector('.main-display');
-    
-    // Set canvas size to match actual display size
-    canvas.width = mainDisplay.clientWidth;
-    canvas.height = mainDisplay.clientHeight;
-    
-    depthCanvas.width = depthGraphDiv.clientWidth;
-    depthCanvas.height = depthGraphDiv.clientHeight;
-    
+    syncCanvasSize(canvas, mainDisplay.clientWidth, mainDisplay.clientHeight);
+    syncCanvasSize(depthCanvas, depthGraphDiv.clientWidth, depthGraphDiv.clientHeight);
     redraw();
     redrawDepthGraph();
 }
 
-// Resize on load and window resize
+/** After layout changes (metrics panel, portrait resize), remeasure canvases. */
+function resizeCanvasAfterLayout() {
+    requestAnimationFrame(() => {
+        resizeCanvas();
+    });
+}
+
+// Resize on load, window resize, and container size changes
 window.addEventListener('resize', resizeCanvas);
 window.addEventListener('load', resizeCanvas);
+if (typeof ResizeObserver !== 'undefined') {
+    const ro = new ResizeObserver(() => resizeCanvas());
+    const mainDisplay = document.querySelector('.main-display');
+    if (mainDisplay) ro.observe(mainDisplay);
+    if (depthGraphDiv) ro.observe(depthGraphDiv);
+}
 resizeCanvas();
 
 // Redraw once web fonts are ready so graph labels stay crisp
 if (document.fonts && document.fonts.ready) {
     document.fonts.ready.then(() => {
-        redraw();
-        redrawDepthGraph();
+        resizeCanvas();
     });
 }
+
+function hideTissueTooltip() {
+    hoveredComp = -1;
+    lastTissuePointer = null;
+    if (tissueTooltip) {
+        tissueTooltip.hidden = true;
+        tissueTooltip.innerHTML = '';
+    }
+    canvas.style.cursor = 'default';
+}
+
+function showTissueTooltip(compIndex, clientX, clientY) {
+    if (!tissueTooltip || tissueStates.length === 0 || currentIndex >= tissueStates.length) {
+        hideTissueTooltip();
+        return;
+    }
+
+    const state = tissueStates[currentIndex];
+    const pn2 = state.pn2[compIndex];
+    const phe = state.phe[compIndex];
+    const ptotal = pn2 + phe;
+    const pamb = ambientPressures[currentIndex];
+
+    tissueTooltip.innerHTML = `
+        <strong>Comp ${compIndex + 1}</strong>
+        <div class="tip-row tip-n2"><span>N₂ (PN2)</span><span>${pn2.toFixed(3)} bar</span></div>
+        <div class="tip-row tip-he"><span>He (PHe)</span><span>${phe.toFixed(3)} bar</span></div>
+        <div class="tip-row tip-total"><span>Total</span><span>${ptotal.toFixed(3)} bar</span></div>
+        <div class="tip-row"><span>Ambient</span><span>${pamb.toFixed(3)} bar</span></div>
+        <div class="tip-row"><span>T½</span><span>N₂ ${ZHL16C_N2_HALF[compIndex]}m · He ${ZHL16C_HE_HALF[compIndex]}m</span></div>
+    `;
+    tissueTooltip.hidden = false;
+
+    const mainDisplay = document.querySelector('.main-display');
+    const rect = mainDisplay.getBoundingClientRect();
+    let left = clientX - rect.left;
+    let top = clientY - rect.top;
+
+    // Keep tooltip inside the main display
+    tissueTooltip.style.left = `${left}px`;
+    tissueTooltip.style.top = `${top}px`;
+    tissueTooltip.style.transform = 'translate(-50%, calc(-100% - 10px))';
+
+    const tipRect = tissueTooltip.getBoundingClientRect();
+    if (tipRect.left < rect.left + 6) {
+        left = tipRect.width / 2 + 6;
+        tissueTooltip.style.left = `${left}px`;
+    } else if (tipRect.right > rect.right - 6) {
+        left = rect.width - tipRect.width / 2 - 6;
+        tissueTooltip.style.left = `${left}px`;
+    }
+    if (tipRect.top < rect.top + 6) {
+        tissueTooltip.style.transform = 'translate(-50%, 12px)';
+    }
+}
+
+function hitTestTissueBar(cssX, cssY) {
+    for (const area of tissueBarHitAreas) {
+        if (cssX >= area.x && cssX <= area.x + area.w && cssY >= area.y && cssY <= area.y + area.h) {
+            return area.comp;
+        }
+    }
+    return -1;
+}
+
+function handleTissuePointerMove(e) {
+    if (tissueStates.length === 0) {
+        if (hoveredComp !== -1) {
+            hideTissueTooltip();
+            redraw();
+        }
+        return;
+    }
+
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    lastTissuePointer = { x, y, clientX: e.clientX, clientY: e.clientY };
+
+    const comp = hitTestTissueBar(x, y);
+    if (comp === hoveredComp) {
+        if (comp >= 0) showTissueTooltip(comp, e.clientX, e.clientY);
+        return;
+    }
+
+    hoveredComp = comp;
+    if (comp >= 0) {
+        canvas.style.cursor = 'pointer';
+        showTissueTooltip(comp, e.clientX, e.clientY);
+    } else {
+        if (tissueTooltip) {
+            tissueTooltip.hidden = true;
+            tissueTooltip.innerHTML = '';
+        }
+        canvas.style.cursor = 'default';
+    }
+    redraw();
+}
+
+function handleTissuePointerLeave() {
+    if (hoveredComp === -1 && (!tissueTooltip || tissueTooltip.hidden)) return;
+    hideTissueTooltip();
+    redraw();
+}
+
+canvas.addEventListener('pointermove', handleTissuePointerMove);
+canvas.addEventListener('pointerleave', handleTissuePointerLeave);
+canvas.addEventListener('pointerdown', handleTissuePointerMove);
 
 // Interactive depth graph controls
 depthGraphDiv.addEventListener('mousedown', handleMouseDown);
@@ -178,6 +317,9 @@ function updatePositionFromMouse(e) {
     redraw();
     redrawDepthGraph();
     updateMetrics();
+    if (hoveredComp >= 0 && lastTissuePointer) {
+        showTissueTooltip(hoveredComp, lastTissuePointer.clientX, lastTissuePointer.clientY);
+    }
 }
 
 // File handling
@@ -200,9 +342,8 @@ document.getElementById('fileInput').addEventListener('change', async (e) => {
         document.getElementById('scaleBtn').disabled = false;
         document.getElementById('metricsDisplay').style.display = 'flex';
         renderSettings();
-        redraw();
-        redrawDepthGraph();
         updateMetrics();
+        resizeCanvasAfterLayout();
     } catch (error) {
         document.getElementById('statusText').textContent = `Error: ${error.message}`;
     }
@@ -238,9 +379,8 @@ async function loadDemoData(filename) {
         document.getElementById('scaleBtn').disabled = false;
         document.getElementById('metricsDisplay').style.display = 'flex';
         renderSettings();
-        redraw();
-        redrawDepthGraph();
         updateMetrics();
+        resizeCanvasAfterLayout();
     } catch (error) {
         document.getElementById('statusText').textContent = `Error loading demo data: ${error.message}`;
     }
@@ -264,17 +404,23 @@ function resetState() {
     currentIndex = 0;
     fixedScale = false;
     maxAmbientPressure = 0;
+    tissueBarHitAreas = [];
+    hideTissueTooltip();
     
     document.getElementById('playPauseBtn').textContent = 'Play';
     document.getElementById('scaleBtn').textContent = 'Fix Scale';
     document.getElementById('metricsDisplay').style.display = 'none';
     depthGraphDiv.classList.remove('dragging');
     
+    const tw = canvas.clientWidth || canvas.width;
+    const th = canvas.clientHeight || canvas.height;
     ctx.fillStyle = THEME.canvasBg;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillRect(0, 0, tw, th);
     
+    const dw = depthCanvas.clientWidth || depthCanvas.width;
+    const dh = depthCanvas.clientHeight || depthCanvas.height;
     depthCtx.fillStyle = THEME.panelBg;
-    depthCtx.fillRect(0, 0, depthCanvas.width, depthCanvas.height);
+    depthCtx.fillRect(0, 0, dw, dh);
 }
 
 // Control buttons
@@ -635,6 +781,9 @@ function animate() {
     redraw();
     redrawDepthGraph();
     updateMetrics();
+    if (hoveredComp >= 0 && lastTissuePointer) {
+        showTissueTooltip(hoveredComp, lastTissuePointer.clientX, lastTissuePointer.clientY);
+    }
 
     if (currentIndex >= tissueStates.length - 1) {
         playing = false;
@@ -647,17 +796,26 @@ function animate() {
 }
 
 function redraw() {
+    // Logical (CSS) pixels — matches setTransform(dpr) so text is not stretched
+    const canvasWidth = canvas.clientWidth || canvas.width;
+    const canvasHeight = canvas.clientHeight || canvas.height;
+    if (canvasWidth < 2 || canvasHeight < 2) return;
+
     ctx.fillStyle = THEME.canvasBg;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillRect(0, 0, canvasWidth, canvasHeight);
     prepareGraphText(ctx);
 
-    // Responsive sizing
-    const canvasWidth = canvas.width;
-    const canvasHeight = canvas.height;
-    const scaleFactor = Math.min(canvasWidth / 1920, canvasHeight / 670);
+    // Separate width/height scales so portrait layouts do not squash type
+    const scaleX = canvasWidth / 1920;
+    const scaleY = canvasHeight / 670;
+    const scaleFactor = Math.min(scaleX, scaleY);
+    const isPortrait = canvasHeight / canvasWidth > 1.05;
     
-    // Header
-    const headerHeight = Math.max(50, canvasHeight * 0.104); // ~70px at 670px height
+    // Header — keep compact on short / portrait canvases
+    const headerHeight = Math.max(
+        isPortrait ? 28 : 36,
+        Math.min(canvasHeight * (isPortrait ? 0.07 : 0.104), 70)
+    );
     ctx.fillStyle = THEME.panelBg;
     ctx.fillRect(0, 0, canvasWidth, headerHeight);
     ctx.strokeStyle = THEME.border;
@@ -669,7 +827,7 @@ function redraw() {
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
 
-    const headerFontSize = Math.max(12, 14 * scaleFactor);
+    const headerFontSize = fitTextSize(Math.max(11, 14 * scaleFactor), headerHeight, 0.5);
     if (tissueStates.length > 0 && currentIndex < samples.length) {
         const t_s = times[currentIndex] / 1000;
         const depth = samples[currentIndex].depth;
@@ -679,19 +837,19 @@ function redraw() {
         const fn2 = Math.max(0, 1 - fo2 - fhe);
 
         ctx.fillStyle = THEME.ink;
-        ctx.font = graphFont(headerFontSize, { weight: '600' });
+        ctx.font = graphFont(headerFontSize, { weight: '600', min: 8 });
         ctx.fillText(
             `t=${t_s.toFixed(1)}s   depth=${depth.toFixed(1)} m   Pamb=${pamb.toFixed(3)} bar   FO2=${fo2.toFixed(2)} FHe=${fhe.toFixed(2)} FN2=${fn2.toFixed(2)}   [Frame ${currentIndex + 1}/${tissueStates.length}]`,
-            Math.round(12 * scaleFactor), Math.round(headerHeight / 2)
+            Math.round(12 * Math.max(scaleFactor, 0.5)), Math.round(headerHeight / 2)
         );
     } else {
         ctx.fillStyle = THEME.inkSecondary;
-        ctx.font = graphFont(headerFontSize);
-        ctx.fillText('Load a CSV log to visualize ZHL-16C tissue pressures.', Math.round(12 * scaleFactor), Math.round(headerHeight / 2));
+        ctx.font = graphFont(headerFontSize, { min: 8 });
+        ctx.fillText('Load a CSV log to visualize ZHL-16C tissue pressures.', Math.round(12 * Math.max(scaleFactor, 0.5)), Math.round(headerHeight / 2));
     }
 
     // Legend — auto width from measured text + icons (no overlap)
-    const legendFontSize = Math.max(11, 12 * scaleFactor);
+    const legendFontSize = Math.max(9, Math.min(12, 12 * scaleFactor));
     const legendPadX = Math.max(10, 12 * scaleFactor);
     const legendPadY = Math.max(6, 8 * scaleFactor);
     const legendGap = Math.max(14, 18 * scaleFactor);
@@ -756,22 +914,30 @@ function redraw() {
     }
 
     // Draw compartments — reserve bottom space so x-axis ticks/labels are never covered
-    const tickFontSize = Math.max(11, 10 * scaleFactor);
-    const tickLen = Math.max(5, Math.round(6 * scaleFactor));
-    const tickLabelGap = Math.max(4, Math.round(6 * scaleFactor));
-    const axisBottomPad = Math.max(6, Math.round(8 * scaleFactor));
+    const tickFontSize = Math.max(9, Math.min(12, 10 * scaleFactor));
+    const tickLen = Math.max(4, Math.round(6 * scaleFactor));
+    const tickLabelGap = Math.max(3, Math.round(5 * scaleFactor));
+    const axisBottomPad = Math.max(4, Math.round(6 * scaleFactor));
     const axisBottomSpace = tickLen + tickLabelGap + tickFontSize + axisBottomPad;
 
-    const topY = headerHeight + Math.max(50 * scaleFactor, legendHeight + 20 * scaleFactor);
-    const bottomY = canvasHeight - axisBottomSpace;
-    const leftX = 40 * scaleFactor;
-    const rightX = canvasWidth - 40 * scaleFactor;
+    const legendClearance = Math.max(
+        isPortrait ? 8 : 12,
+        legendHeight + (isPortrait ? 10 : 16) * Math.max(scaleFactor, 0.4)
+    );
+    const topY = headerHeight + legendClearance;
+    const bottomY = Math.max(topY + 16 * 8, canvasHeight - axisBottomSpace);
+    const leftX = Math.max(8, 40 * Math.max(scaleX, 0.4));
+    const rightX = canvasWidth - Math.max(8, 40 * Math.max(scaleX, 0.4));
     const rowH = Math.max(1, (bottomY - topY) / 16);
-    const compFontSize = Math.max(12, 12 * scaleFactor);
-    const halfFontSize = Math.max(11, 11 * scaleFactor);
-    const valueFontSize = Math.max(11, 12 * scaleFactor);
-    const labelGap = Math.max(10, 12 * scaleFactor);
-    const labelPadRight = Math.max(12, 14 * scaleFactor);
+    // Font sizes track row height so portrait layouts do not vertically crush glyphs
+    const preferredComp = Math.max(10, 12 * scaleFactor);
+    const preferredHalf = Math.max(9, 11 * scaleFactor);
+    const preferredValue = Math.max(9, 12 * scaleFactor);
+    const compFontSize = fitTextSize(preferredComp, rowH, 0.55);
+    const halfFontSize = fitTextSize(preferredHalf, rowH, 0.5);
+    const valueFontSize = fitTextSize(preferredValue, rowH, 0.5);
+    const labelGap = Math.max(6, 12 * Math.max(scaleX, 0.45));
+    const labelPadRight = Math.max(8, 14 * Math.max(scaleX, 0.45));
 
     // Combined left-column labels; measure so bars start after the text
     const rowLabels = [];
@@ -779,9 +945,9 @@ function redraw() {
     for (let i = 0; i < 16; i++) {
         const compText = `Comp ${i + 1}`;
         const halfText = `N₂ ${ZHL16C_N2_HALF[i]}m  He ${ZHL16C_HE_HALF[i]}m`;
-        ctx.font = graphFont(compFontSize, { weight: '600' });
+        ctx.font = graphFont(compFontSize, { weight: '600', min: 8 });
         const compW = ctx.measureText(compText).width;
-        ctx.font = graphFont(halfFontSize);
+        ctx.font = graphFont(halfFontSize, { min: 8 });
         const halfW = ctx.measureText(halfText).width;
         const totalW = compW + labelGap + halfW;
         rowLabels.push({ compText, halfText, compW });
@@ -804,26 +970,31 @@ function redraw() {
         }
     }
 
+    tissueBarHitAreas = [];
+
     // Draw rows first (stop at bottomY so they do not cover the x-axis band)
     for (let i = 0; i < 16; i++) {
         const y0 = topY + i * rowH;
         const y1 = y0 + rowH;
         const yc = (y0 + y1) / 2;
         const { compText, halfText, compW } = rowLabels[i];
+        const isHovered = hoveredComp === i;
 
         // Alternating background — only within plot area
-        ctx.fillStyle = i % 2 === 0 ? THEME.rowEven : THEME.rowOdd;
+        ctx.fillStyle = isHovered
+            ? '#dceaf0'
+            : (i % 2 === 0 ? THEME.rowEven : THEME.rowOdd);
         ctx.fillRect(0, y0, canvasWidth, rowH);
 
         // Combined Comp N + half-times in the left column
         ctx.textAlign = 'left';
         ctx.textBaseline = 'middle';
         ctx.fillStyle = THEME.ink;
-        ctx.font = graphFont(compFontSize, { weight: '600' });
+        ctx.font = graphFont(compFontSize, { weight: '600', min: 8 });
         ctx.fillText(compText, Math.round(leftX), Math.round(yc));
 
         ctx.fillStyle = THEME.muted;
-        ctx.font = graphFont(halfFontSize);
+        ctx.font = graphFont(halfFontSize, { min: 8 });
         ctx.fillText(halfText, Math.round(leftX + compW + labelGap), Math.round(yc));
 
         // Bars start after the left column
@@ -835,16 +1006,39 @@ function redraw() {
 
             const w_n2 = (pn2 / maxP) * barMaxW;
             const w_he = (phe / maxP) * barMaxW;
+            const barW = Math.max(w_n2 + w_he, 4);
             
             const barPadding = rowH * 0.15;
+            const barY = y0 + barPadding;
+            const barH = rowH - 2 * barPadding;
+
+            // Hit area covers the full pressure track for easier hover
+            tissueBarHitAreas.push({
+                comp: i,
+                x: barStartX,
+                y: y0,
+                w: barMaxW,
+                h: rowH
+            });
 
             // N2 segment
             ctx.fillStyle = THEME.n2;
-            ctx.fillRect(barStartX, y0 + barPadding, w_n2, rowH - 2 * barPadding);
+            ctx.fillRect(barStartX, barY, w_n2, barH);
 
             // He segment
             ctx.fillStyle = THEME.he;
-            ctx.fillRect(barStartX + w_n2, y0 + barPadding, w_he, rowH - 2 * barPadding);
+            ctx.fillRect(barStartX + w_n2, barY, w_he, barH);
+
+            if (isHovered) {
+                ctx.strokeStyle = THEME.ink;
+                ctx.lineWidth = 2;
+                ctx.strokeRect(
+                    Math.round(barStartX) + 0.5,
+                    Math.round(barY) + 0.5,
+                    Math.max(1, Math.round(barW) - 1),
+                    Math.max(1, Math.round(barH) - 1)
+                );
+            }
 
             // Ambient pressure line
             const pamb = ambientPressures[currentIndex];
@@ -860,7 +1054,7 @@ function redraw() {
             ctx.textAlign = 'right';
             ctx.textBaseline = 'middle';
             ctx.fillStyle = THEME.ink;
-            ctx.font = graphFont(valueFontSize, { mono: true });
+            ctx.font = graphFont(valueFontSize, { mono: true, min: 8 });
             ctx.fillText(
                 `PN2 ${pn2.toFixed(3)}  PHe ${phe.toFixed(3)}  Total ${ptotal.toFixed(3)} bar`,
                 Math.round(rightX), Math.round(yc)
@@ -881,7 +1075,7 @@ function redraw() {
     ctx.stroke();
 
     ctx.fillStyle = THEME.muted;
-    ctx.font = graphFont(tickFontSize);
+    ctx.font = graphFont(tickFontSize, { min: 8 });
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
     const numTicks = 8;
@@ -897,27 +1091,40 @@ function redraw() {
 }
 
 function redrawDepthGraph() {
+    const canvasWidth = depthCanvas.clientWidth || depthCanvas.width;
+    const canvasHeight = depthCanvas.clientHeight || depthCanvas.height;
+    if (canvasWidth < 2 || canvasHeight < 2) return;
+
     depthCtx.fillStyle = THEME.panelBg;
-    depthCtx.fillRect(0, 0, depthCanvas.width, depthCanvas.height);
+    depthCtx.fillRect(0, 0, canvasWidth, canvasHeight);
     prepareGraphText(depthCtx);
 
     if (samples.length === 0) {
         depthCtx.fillStyle = THEME.muted;
-        depthCtx.font = graphFont(Math.max(12, depthCanvas.height * 0.045));
+        depthCtx.font = graphFont(Math.max(11, canvasHeight * 0.045), { min: 8 });
         depthCtx.textAlign = 'center';
         depthCtx.textBaseline = 'middle';
-        depthCtx.fillText('Depth vs Time graph will appear here', Math.round(depthCanvas.width / 2), Math.round(depthCanvas.height / 2));
+        depthCtx.fillText('Depth vs Time graph will appear here', Math.round(canvasWidth / 2), Math.round(canvasHeight / 2));
         return;
     }
 
-    const canvasWidth = depthCanvas.width;
-    const canvasHeight = depthCanvas.height;
     const scaleFactor = Math.min(canvasWidth / 960, canvasHeight / 280);
+
+    const axisLabelSize = Math.max(11, 12 * scaleFactor);
+    const tickSize = Math.max(11, 10 * scaleFactor);
+    const titleSize = Math.max(13, 14 * scaleFactor);
+    const bottomPad = Math.max(6, Math.round(8 * scaleFactor));
+    const tickLabelGap = Math.max(6, Math.round(8 * scaleFactor));
+    // Room for tick marks + tick labels + "Time (mm:ss)" above the canvas edge / footer
+    const bottomMargin = Math.max(
+        56,
+        Math.round(tickLabelGap + tickSize + 6 + axisLabelSize + bottomPad + 8 * scaleFactor)
+    );
 
     const margin = { 
         top: Math.max(30, 40 * scaleFactor), 
         right: Math.max(20, 30 * scaleFactor), 
-        bottom: Math.max(50, 60 * scaleFactor), 
+        bottom: bottomMargin, 
         left: Math.max(60, 80 * scaleFactor) 
     };
     
@@ -931,13 +1138,9 @@ function redrawDepthGraph() {
     const maxDepth = Math.max(...samples.map(s => s.depth));
     const surfaceBar = getSurfacePressure();
 
-    const axisLabelSize = Math.max(11, 12 * scaleFactor);
-    const tickSize = Math.max(11, 10 * scaleFactor);
-    const titleSize = Math.max(13, 14 * scaleFactor);
-
     // Draw axis labels FIRST (background layer) - FIXED POSITION
     depthCtx.fillStyle = THEME.inkSecondary;
-    depthCtx.font = graphFont(axisLabelSize);
+    depthCtx.font = graphFont(axisLabelSize, { min: 8 });
     depthCtx.textAlign = 'center';
     depthCtx.textBaseline = 'middle';
     
@@ -948,13 +1151,17 @@ function redrawDepthGraph() {
     depthCtx.fillText('Depth (m)', 0, 0);
     depthCtx.restore();
     
-    // X-axis label - FIXED POSITION
-    depthCtx.textBaseline = 'top';
-    depthCtx.fillText('Time (mm:ss)', Math.round(canvasWidth / 2), Math.round(canvasHeight - Math.max(8, 12 * scaleFactor)));
+    // X-axis title — baseline bottom so it stays inside the canvas above the footer
+    depthCtx.textBaseline = 'bottom';
+    depthCtx.fillText(
+        'Time (mm:ss)',
+        Math.round(canvasWidth / 2),
+        Math.round(canvasHeight - bottomPad)
+    );
 
     // Draw title - FIXED POSITION
     depthCtx.fillStyle = THEME.ink;
-    depthCtx.font = graphFont(titleSize, { weight: '600' });
+    depthCtx.font = graphFont(titleSize, { weight: '600', min: 8 });
     depthCtx.textAlign = 'center';
     depthCtx.textBaseline = 'top';
     depthCtx.fillText('Depth vs Time', Math.round(canvasWidth / 2), Math.round(Math.max(8, 10 * scaleFactor)));
@@ -970,7 +1177,7 @@ function redrawDepthGraph() {
 
     // Y-axis labels
     depthCtx.fillStyle = THEME.muted;
-    depthCtx.font = graphFont(tickSize);
+    depthCtx.font = graphFont(tickSize, { min: 8 });
     depthCtx.textAlign = 'right';
     depthCtx.textBaseline = 'middle';
     
@@ -987,9 +1194,10 @@ function redrawDepthGraph() {
         depthCtx.fillText(depth.toFixed(1) + ' m', Math.round(margin.left - 8), Math.round(y));
     }
 
-    // X-axis labels
+    // X-axis tick labels (above the "Time (mm:ss)" title)
     depthCtx.textAlign = 'center';
     depthCtx.textBaseline = 'top';
+    const xTickLabelY = Math.round(margin.top + graphHeight + tickLabelGap);
     
     const xTicks = 6;
     for (let i = 0; i <= xTicks; i++) {
@@ -1003,7 +1211,7 @@ function redrawDepthGraph() {
         
         const minutes = Math.floor(time / 60);
         const seconds = Math.floor(time % 60);
-        depthCtx.fillText(`${minutes}:${seconds.toString().padStart(2, '0')}`, Math.round(x), Math.round(margin.top + graphHeight + 8));
+        depthCtx.fillText(`${minutes}:${seconds.toString().padStart(2, '0')}`, Math.round(x), xTickLabelY);
     }
 
     // Highlight deco zones (NDL = 0 or in deco)

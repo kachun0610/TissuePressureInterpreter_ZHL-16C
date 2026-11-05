@@ -440,10 +440,12 @@ canvas {
 }
 
 .gf-graph-wrap {
-    width: 100%;
+    width: min(100%, clamp(420px, 90vmin, 900px));
     max-width: 100%;
-    height: clamp(280px, 42vh, 420px);
-    min-height: 260px;
+    aspect-ratio: 2 / 1;
+    height: auto;
+    min-height: 0;
+    margin-inline: auto;
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: var(--radius);
@@ -475,12 +477,20 @@ canvas {
 
 .gf-comp-buttons {
     display: flex;
-    flex-wrap: wrap;
-    justify-content: center;
+    flex-direction: column;
+    align-items: center;
     gap: 0.45rem;
     margin-top: 0.9rem;
     width: 100%;
     max-width: 100%;
+}
+
+.gf-comp-row {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0.45rem;
+    width: 100%;
 }
 
 .gf-comp-btn {

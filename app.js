@@ -1351,6 +1351,12 @@ function buildGfCompButtons() {
     if (!gfCompButtonsHost) return;
     gfCompButtonsHost.innerHTML = '';
 
+    const rows = [document.createElement('div'), document.createElement('div')];
+    rows.forEach((row) => {
+        row.className = 'gf-comp-row';
+        gfCompButtonsHost.appendChild(row);
+    });
+
     for (let i = 0; i < 16; i++) {
         const btn = document.createElement('button');
         btn.type = 'button';
@@ -1368,7 +1374,7 @@ function buildGfCompButtons() {
             });
             redrawGfGraph();
         });
-        gfCompButtonsHost.appendChild(btn);
+        rows[i < 8 ? 0 : 1].appendChild(btn);
     }
 }
 
@@ -1385,12 +1391,23 @@ function redrawGfGraph() {
 
     const margin = {
         top: 48,
-        right: 18,
+        right: 28,
         bottom: 48,
         left: 58
     };
-    const plotW = Math.max(10, width - margin.left - margin.right);
-    const plotH = Math.max(10, height - margin.top - margin.bottom);
+    // Keep the plot itself 2:1 (width:height) inside the canvas
+    const availW = Math.max(10, width - margin.left - margin.right);
+    const availH = Math.max(10, height - margin.top - margin.bottom);
+    let plotW = availW;
+    let plotH = plotW / 2;
+    if (plotH > availH) {
+        plotH = availH;
+        plotW = plotH * 2;
+    }
+    margin.left = Math.round(margin.left + (availW - plotW) / 2);
+    margin.right = width - margin.left - plotW;
+    margin.top = Math.round(margin.top + (availH - plotH) / 2);
+    margin.bottom = height - margin.top - plotH;
 
     const surfaceBar = settings ? getSurfacePressure() : 1.013;
     const comp = selectedGfComp;

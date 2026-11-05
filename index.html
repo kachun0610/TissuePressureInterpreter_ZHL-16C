@@ -17,6 +17,13 @@
                     <button type="button" id="playPauseBtn" disabled>Play</button>
                     <button type="button" id="restartBtn" disabled>Restart</button>
                     <button type="button" id="scaleBtn" disabled>Fix Scale</button>
+                    <div class="speed-buttons" role="group" aria-label="Playback Speed">
+                        <button type="button" class="speed-btn" data-delay="10">Very Fast</button>
+                        <button type="button" class="speed-btn" data-delay="20">Fast</button>
+                        <button type="button" class="speed-btn active" data-delay="100">Normal</button>
+                        <button type="button" class="speed-btn" data-delay="200">Slow</button>
+                        <button type="button" class="speed-btn" data-delay="500">Very Slow</button>
+                    </div>
                 </div>
                 <div class="data-buttons">
                     <button type="button" id="importBtn">Import CSV Log...</button>
@@ -24,31 +31,21 @@
                     <button type="button" id="demoBtn">Use Demo Data</button>
                     <button type="button" id="demoBtnEAN32">Use Demo Data (EAN32)</button>
                 </div>
-                <span class="status-text" id="statusText" aria-live="polite">Load a CSV to begin.</span>
+                                <span class="status-text" id="statusText" aria-live="polite">Import a Dive Log (CSV) from Shearwater Dive Computer to Replay Your Dive</span>
             </section>
-
-            <nav class="right-section" aria-label="Playback speed">
-                <div class="speed-buttons">
-                    <button type="button" class="speed-btn" data-delay="10">Very Fast</button>
-                    <button type="button" class="speed-btn" data-delay="20">Fast</button>
-                    <button type="button" class="speed-btn active" data-delay="100">Normal</button>
-                    <button type="button" class="speed-btn" data-delay="200">Slow</button>
-                    <button type="button" class="speed-btn" data-delay="500">Very Slow</button>
-                </div>
-            </nav>
         </header>
 
         <main class="main-display">
-            <canvas id="tissueCanvas" role="img" aria-label="ZHL-16C tissue pressure visualization"></canvas>
+            <canvas id="tissueCanvas" role="img" aria-label="ZHL-16C Tissue Pressure Visualization"></canvas>
             <div id="tissueTooltip" class="tissue-tooltip" hidden role="tooltip"></div>
         </main>
 
-        <aside class="bottom-area" aria-label="Dive details">
+        <aside class="bottom-area" aria-label="Dive Details">
             <section class="settings-panel">
                 <div class="settings-info" id="settingsPanel">
-                    <p>Dive computer settings will appear here after import.</p>
+                    <p>Dive Computer Settings Will Appear Here After Import.</p>
                 </div>
-                <section class="metrics-display" id="metricsDisplay" style="display: none;" aria-label="Dive metrics">
+                <section class="metrics-display" id="metricsDisplay" style="display: none;" aria-label="Dive Metrics">
                     <div class="metric-item">
                         <div class="metric-label">Ceiling</div>
                         <div class="metric-value" id="ceilingValue">--</div>
@@ -64,12 +61,28 @@
                 </section>
             </section>
             <section class="depth-graph" id="depthGraph">
-                <canvas id="depthCanvas" role="img" aria-label="Depth versus time graph"></canvas>
+                <canvas id="depthCanvas" role="img" aria-label="Depth Versus Time Graph"></canvas>
             </section>
         </aside>
 
+        <section class="gf-section" aria-label="Gradient Factor Graph">
+            <div class="gf-section-header">
+                <h2 class="gf-title">Gradient Factor</h2>
+                <p class="gf-subtitle">
+                    Ambient Pressure Vs Tissue Inert-Gas Pressure For The Selected Compartment.
+                    One GF Line Runs From GF Low At Max Depth (First-Stop Conservatism) To GF High At The Surface.
+                </p>
+                <p class="gf-meta" id="gfMeta">Load A Dive Log To Plot Gradient Factors.</p>
+            </div>
+            <div class="gf-graph-wrap" id="gfGraphWrap">
+                <canvas id="gfCanvas" role="img" aria-label="Gradient Factor Compartment Diagram"></canvas>
+                <div id="gfTooltip" class="tissue-tooltip gf-tooltip" hidden role="tooltip"></div>
+            </div>
+            <div class="gf-comp-buttons" id="gfCompButtons" role="group" aria-label="Tissue Compartments"></div>
+        </section>
+
         <footer class="site-footer">
-            Powered by KC Diving
+            Powered By KC Diving
             <a href="https://www.instagram.com/kc.diving/" target="_blank" rel="noopener noreferrer">Instagram@kc.diving</a>
         </footer>
     </div>

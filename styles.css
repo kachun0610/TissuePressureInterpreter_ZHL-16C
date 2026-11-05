@@ -29,7 +29,7 @@
     --safe: #0f6b3c;
     --safe-bg: #d9f0e4;
     --shadow: 0 1px 2px rgba(11, 31, 42, 0.06), 0 8px 24px rgba(11, 31, 42, 0.06);
-    --title-size: clamp(0.95rem, 0.55rem + 1.1vw, 1.35rem);
+    --title-size: clamp(1.235rem, 0.715rem + 1.43vw, 1.755rem);
     --btn-size: clamp(0.72rem, 0.5rem + 0.45vw, 0.875rem);
     --status-size: clamp(0.78rem, 0.58rem + 0.35vw, 0.9rem);
     --top-gap: clamp(0.5rem, 1.2vw, 1.25rem);
@@ -56,8 +56,8 @@ body {
 .container {
     width: 100%;
     max-width: 100%;
-    height: 100vh;
     min-height: 100vh;
+    height: auto;
     display: flex;
     flex-direction: column;
     overflow-x: hidden;
@@ -79,21 +79,12 @@ body {
 }
 
 .middle-section {
-    flex: 2 1 18rem;
-    min-width: min(100%, 14rem);
+    flex: 1 1 100%;
+    min-width: 0;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: calc(var(--top-gap) * 0.55);
-}
-
-.right-section {
-    flex: 1 1 14rem;
-    min-width: min(100%, 12rem);
-    display: flex;
-    flex-direction: column;
-    align-items: flex-end;
     gap: calc(var(--top-gap) * 0.55);
 }
 
@@ -196,6 +187,7 @@ button.active:hover {
     gap: calc(var(--top-gap) * 0.65);
     flex-wrap: wrap;
     justify-content: center;
+    align-items: center;
     width: 100%;
 }
 
@@ -203,7 +195,8 @@ button.active:hover {
     display: flex;
     gap: calc(var(--top-gap) * 0.45);
     flex-wrap: wrap;
-    justify-content: flex-end;
+    justify-content: center;
+    align-items: center;
 }
 
 .status-text {
@@ -220,7 +213,8 @@ button.active:hover {
 }
 
 .main-display {
-    flex: 1;
+    flex: 0 0 auto;
+    height: min(52vh, 560px);
     min-height: 280px;
     background: var(--bg-soft);
     position: relative;
@@ -407,6 +401,115 @@ canvas {
     max-width: 100%;
 }
 
+.gf-section {
+    flex: 0 0 auto;
+    width: 100%;
+    max-width: 100%;
+    padding: clamp(1rem, 2vh, 1.5rem) clamp(0.85rem, 2vw, 1.5rem) clamp(1.25rem, 2.5vh, 1.75rem);
+    background: linear-gradient(180deg, var(--bg-soft) 0%, var(--surface) 100%);
+    border-top: 1px solid var(--border);
+    box-sizing: border-box;
+}
+
+.gf-section-header {
+    text-align: center;
+    margin-bottom: 0.85rem;
+}
+
+.gf-title {
+    margin: 0;
+    font-size: clamp(1.05rem, 0.9rem + 0.7vw, 1.35rem);
+    font-weight: 700;
+    color: var(--ink);
+    letter-spacing: -0.02em;
+}
+
+.gf-subtitle {
+    margin: 0.35rem auto 0;
+    max-width: 46rem;
+    color: var(--muted);
+    font-size: clamp(0.78rem, 0.7rem + 0.3vw, 0.9rem);
+    line-height: 1.45;
+}
+
+.gf-meta {
+    margin: 0.5rem 0 0;
+    color: var(--ink-secondary);
+    font-size: 0.8125rem;
+    font-weight: 600;
+}
+
+.gf-graph-wrap {
+    width: 100%;
+    max-width: 100%;
+    height: clamp(280px, 42vh, 420px);
+    min-height: 260px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+    position: relative;
+}
+
+.gf-tooltip {
+    min-width: 14rem;
+    max-width: min(28rem, 92%);
+    font-size: 0.9rem;
+}
+
+.gf-tooltip .gf-tip-def {
+    margin-top: 0.35rem;
+    color: var(--ink-secondary);
+    font-size: 0.84rem;
+    line-height: 1.4;
+    font-family: var(--font);
+}
+
+.gf-graph-wrap canvas {
+    width: 100%;
+    height: 100%;
+    max-width: 100%;
+    display: block;
+}
+
+.gf-comp-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0.45rem;
+    margin-top: 0.9rem;
+    width: 100%;
+    max-width: 100%;
+}
+
+.gf-comp-btn {
+    min-width: 4.5rem;
+    padding: 0.4rem 0.65rem;
+    background: var(--surface-muted);
+    color: var(--ink-secondary);
+    border: 1px solid var(--border);
+    box-shadow: none;
+}
+
+.gf-comp-btn:hover {
+    background: var(--accent-soft);
+    border-color: var(--accent);
+    color: var(--accent-hover);
+}
+
+.gf-comp-btn.active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #ffffff;
+}
+
+.gf-comp-btn.active:hover {
+    background: var(--accent-hover);
+    border-color: var(--accent-hover);
+    color: #ffffff;
+}
+
 .site-footer {
     flex: 0 0 auto;
     display: flex;
@@ -448,18 +551,6 @@ canvas {
 
 input[type="file"] {
     display: none;
-}
-
-@container (max-width: 52rem) {
-    .middle-section,
-    .right-section {
-        flex-basis: 100%;
-        align-items: center;
-    }
-
-    .speed-buttons {
-        justify-content: center;
-    }
 }
 
 /* Portrait / narrow: give the tissue graph more height so row text is not crushed */
